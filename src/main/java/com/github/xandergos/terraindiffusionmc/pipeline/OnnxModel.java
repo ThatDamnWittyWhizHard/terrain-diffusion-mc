@@ -1,7 +1,6 @@
 package com.github.xandergos.terraindiffusionmc.pipeline;
 
 import ai.onnxruntime.*;
-import ai.onnxruntime.providers.CoreMLFlags;
 import ai.onnxruntime.providers.OrtCUDAProviderOptions;
 import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import org.slf4j.Logger;
@@ -13,7 +12,6 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -33,7 +31,6 @@ public final class OnnxModel implements AutoCloseable {
 
     private static volatile String resolvedInferenceProvider = null;
     private static final AtomicBoolean providerLoggedOnce = new AtomicBoolean(false);
-    private static final AtomicBoolean coremlWarnLoggedOnce = new AtomicBoolean(false);
     private static final AtomicBoolean cudaWarnLoggedOnce = new AtomicBoolean(false);
     private static final AtomicBoolean dmlWarnLoggedOnce = new AtomicBoolean(false);
     private static final AtomicBoolean noGpuWarnLoggedOnce = new AtomicBoolean(false);
@@ -161,11 +158,6 @@ public final class OnnxModel implements AutoCloseable {
             OrtSession.SessionOptions sessionOptions = new OrtSession.SessionOptions();
             sessionOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
             addGpuProvider(sessionOptions);
-            if ("CoreML".equals(resolvedInferenceProvider)) {
-                throw new OrtException(
-                        "inference.offload_models=false is not supported with CoreML. " +
-                        "Set inference.offload_models=true in terrain-diffusion-mc.properties.");
-            }
             this.gpuSession = env.createSession(modelBytes, sessionOptions);
             this.cpuSession = null;
             LOG.info("ONNX model '{}' loaded on GPU ({} KB) in {} ms",
@@ -329,25 +321,10 @@ public final class OnnxModel implements AutoCloseable {
                 }
             }
         }
-
-        if (!added) {
-            try {
-                // ENABLE_ON_SUBGRAPH: allow CoreML to handle partial graphs with CPU fallback
-                // for unsupported ops, maximising GPU utilisation without requiring full-graph support.
-                opts.addCoreML(EnumSet.of(CoreMLFlags.ENABLE_ON_SUBGRAPH));
-                added = true;
-                setResolvedProviderOnce("CoreML");
-            } catch (Throwable t) {
-                if (coremlWarnLoggedOnce.compareAndSet(false, true)) {
-                    LOG.warn("CoreML not available: {} - {}. This is expected if you are not using a CoreML build.",
-                            t.getClass().getSimpleName(), t.getMessage());
-                }
-            }
-        }
         if (gpuRequired && !added) {
             throw new OrtException(
-                    "inference.device=gpu but no GPU provider (CUDA, DirectML, CoreML) is available. " +
-                    "Use the appropriate build for your platform or set inference.device=cpu.");
+                    "inference.device=gpu but neither CUDA nor DirectML is available. " +
+                    "Use the GPU build or set inference.device=cpu.");
         }
         if (!added) {
             setResolvedProviderOnce("CPU");
