@@ -94,6 +94,7 @@ processResources {
             'mod_name'                     : mod_name,
             'mod_author'                   : mod_author,
             'mod_id'                       : mod_id,
+            'fml_mod_id'                   : findProperty('fml_mod_id') ?: mod_id.replace('-', '_'),
             'license'                      : license,
             'description'                  : project.description,
             'neoforge_version'             : neoforge_version,

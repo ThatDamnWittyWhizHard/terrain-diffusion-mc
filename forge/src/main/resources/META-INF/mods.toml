@@ -4,21 +4,22 @@ license="${license}"
 issueTrackerURL=""
 
 [[mods]]
-modId="${mod_id}"
+modId="${fml_mod_id}"
+namespace="${mod_id}"
 version="${version}"
 displayName="${mod_name}"
 authors="${mod_author}"
 credits="${credits}"
 description='''${description}'''
 
-[[dependencies.${mod_id}]]
+[[dependencies.${fml_mod_id}]]
 modId="forge"
 mandatory=true
 versionRange="${forge_loader_version_range}"
 ordering="NONE"
 side="BOTH"
 
-[[dependencies.${mod_id}]]
+[[dependencies.${fml_mod_id}]]
 modId="minecraft"
 mandatory=true
 versionRange="${minecraft_version_range}"

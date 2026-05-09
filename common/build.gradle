@@ -31,8 +31,29 @@ dependencies {
     compileOnly 'com.microsoft.onnxruntime:onnxruntime-dml:1.0'
 }
 
+sourceSets {
+    main {
+        java {
+            // Guard against stale files left by extracting older migration zips over the same working tree.
+            // Client-only code must stay in src/client/java so :common:compileJava has no net.minecraft.client dependency.
+            exclude 'com/github/xandergos/terraindiffusionmc/client/**'
+            exclude 'com/github/xandergos/terraindiffusionmc/mixin/client/**'
+        }
+    }
+    client {
+        java.srcDir 'src/client/java'
+        resources.srcDir 'src/client/resources'
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
 configurations {
     commonJava {
+        canBeResolved = false
+        canBeConsumed = true
+    }
+    commonClientJava {
         canBeResolved = false
         canBeConsumed = true
     }
@@ -44,6 +65,7 @@ configurations {
 
 artifacts {
     commonJava sourceSets.main.java.sourceDirectories.singleFile
+    commonClientJava sourceSets.client.java.sourceDirectories.singleFile
     commonResources sourceSets.main.resources.sourceDirectories.singleFile
 }
 

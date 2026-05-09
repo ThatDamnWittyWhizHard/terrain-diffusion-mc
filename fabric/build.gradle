@@ -4,9 +4,6 @@ plugins {
     id 'maven-publish'
 }
 
-import groovy.json.JsonOutput
-import groovy.json.JsonSlurper
-import java.security.MessageDigest
 
 def useCuda = project.hasProperty('useCuda') && project.property('useCuda').toString().toLowerCase() == 'true'
 def useDml = project.hasProperty('useDml') && project.property('useDml').toString().toLowerCase() == 'true'
@@ -19,10 +16,6 @@ if ([useCuda, useDml, useCpu].count { it } > 1) {
 if (!useDml && !useCpu && !useCuda) useDml = true
 
 def buildVariant = useCuda ? 'cuda' : useDml ? 'windows' : 'cpu'
-def modelRepositorySlug = 'xandergos/terrain-diffusion-30m-onnx'
-def modelRepositoryRevision = 'ad2df557eca5645f588766101cf3bc3682455c3e'
-def generatedManifestDirectory = layout.buildDirectory.dir('generated/model-assets').get().asFile
-def generatedManifestFile = new File(generatedManifestDirectory, 'model-assets-manifest.json')
 
 version = "${rootProject.version}-${buildVariant}+${project.minecraft_version}"
 group = project.group
@@ -67,6 +60,22 @@ loom {
     }
 }
 
+
+sourceSets {
+    main {
+        java {
+            // Guard against stale files left by extracting older migration zips over the same working tree.
+            // Fabric's main source set cannot compile net.minecraft.client classes when splitEnvironmentSourceSets() is enabled.
+            exclude 'com/github/xandergos/terraindiffusionmc/client/**'
+            exclude 'com/github/xandergos/terraindiffusionmc/mixin/client/**'
+        }
+    }
+    client {
+        java.srcDir project(':common').file('src/client/java')
+        resources.srcDir project(':common').file('src/client/resources')
+    }
+}
+
 fabricApi {
     configureDataGeneration {
         client = true
@@ -100,16 +109,11 @@ dependencies {
 }
 
 processResources {
-    dependsOn 'generateModelAssetManifest'
     inputs.property 'version', project.version
     inputs.property 'minecraft_version', project.minecraft_version
     inputs.property 'loader_version', project.fabric_loader_version
     inputs.property 'build_variant', buildVariant
     filteringCharset 'UTF-8'
-    from(generatedManifestFile) {
-        into ''
-    }
-
     filesMatching('fabric.mod.json') {
         expand 'version': project.version,
                 'minecraft_version': project.minecraft_version,
@@ -164,59 +168,6 @@ tasks.register('pipelineTest', JavaExec) {
     jvmArgs '-Xmx8g'
 }
 
-tasks.register('generateModelAssetManifest') {
-    inputs.property('modelRepositorySlug', modelRepositorySlug)
-    inputs.property('modelRepositoryRevision', modelRepositoryRevision)
-    outputs.file(generatedManifestFile)
-
-    doLast {
-        generatedManifestDirectory.mkdirs()
-
-        String apiUrl = "https://huggingface.co/api/models/${modelRepositorySlug}/revision/${modelRepositoryRevision}?blobs=true"
-        Map modelInfo = new JsonSlurper().parseText(new URL(apiUrl).getText('UTF-8')) as Map
-        List siblings = modelInfo.siblings as List
-
-        List<String> requiredFiles = [
-                'base_model.onnx',
-                'coarse_model.onnx',
-                'decoder_model.onnx',
-                'pipeline_data.json',
-                'world_pipeline_config.json'
-        ]
-
-        Map<String, Object> assetEntries = [:]
-        for (String requiredFileName : requiredFiles) {
-            Map siblingEntry = siblings.find { it.rfilename == requiredFileName } as Map
-            if (siblingEntry == null) {
-                throw new GradleException("Required model asset missing from HF commit ${modelRepositoryRevision}: ${requiredFileName}")
-            }
-
-            String resolveUrl = "https://huggingface.co/${modelRepositorySlug}/resolve/${modelRepositoryRevision}/${requiredFileName}?download=true"
-            long expectedSizeBytes = ((Number) siblingEntry.size).longValue()
-            String expectedSha256
-            if (siblingEntry.lfs instanceof Map && siblingEntry.lfs.sha256 != null) {
-                expectedSha256 = siblingEntry.lfs.sha256 as String
-            } else {
-                byte[] remoteFileBytes = new URL(resolveUrl).bytes
-                expectedSha256 = sha256Hex(remoteFileBytes)
-            }
-
-            assetEntries[requiredFileName] = [
-                    sha256: expectedSha256,
-                    sizeBytes: expectedSizeBytes,
-                    url: resolveUrl
-            ]
-        }
-
-        Map<String, Object> manifestPayload = [
-                repositorySlug: modelRepositorySlug,
-                revision: modelRepositoryRevision,
-                assets: assetEntries
-        ]
-        generatedManifestFile.text = JsonOutput.prettyPrint(JsonOutput.toJson(manifestPayload))
-    }
-}
-
 def isWindows = System.getProperty('os.name').toLowerCase().startsWith('windows')
 def gradlewExecutable = rootProject.file(isWindows ? 'gradlew.bat' : 'gradlew').absolutePath
 
@@ -229,16 +180,6 @@ def gradlewExecutable = rootProject.file(isWindows ? 'gradlew.bat' : 'gradlew').
 
 tasks.register('buildAll') {
     dependsOn 'buildCuda', 'buildDml', 'buildCpu'
-}
-
-String sha256Hex(byte[] fileBytes) {
-    MessageDigest messageDigest = MessageDigest.getInstance('SHA-256')
-    byte[] digestBytes = messageDigest.digest(fileBytes)
-    StringBuilder hexBuilder = new StringBuilder(digestBytes.length * 2)
-    for (byte digestByte : digestBytes) {
-        hexBuilder.append(String.format('%02x', digestByte))
-    }
-    return hexBuilder.toString()
 }
 
 

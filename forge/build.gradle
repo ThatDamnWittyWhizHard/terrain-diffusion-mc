@@ -9,11 +9,12 @@ base {
 }
 mixin {
     config("${mod_id}.mixins.json")
+    config("${mod_id}.client.mixins.json")
     config("${mod_id}.forge.mixins.json")
 }
 jar {
     manifest {
-        attributes["MixinConfigs"] = "${mod_id}.mixins.json,${mod_id}.forge.mixins.json"
+        attributes["MixinConfigs"] = "${mod_id}.mixins.json,${mod_id}.client.mixins.json,${mod_id}.forge.mixins.json"
     }
 }
 
@@ -59,7 +60,7 @@ minecraft {
         data {
             workingDirectory file('runs/data')
             ideaModule "${rootProject.name}.${project.name}.main"
-            args '--mod', mod_id, '--all', '--output', file('src/generated/resources/'), '--existing', file('src/main/resources/')
+            args '--mod', fml_mod_id, '--all', '--output', file('src/generated/resources/'), '--existing', file('src/main/resources/')
             taskName 'Data'
             mods {
                 modDataRun {
@@ -71,6 +72,10 @@ minecraft {
 }
 
 sourceSets.main.resources.srcDir 'src/generated/resources'
+
+sourceSets.main.java.srcDir project(':common').file('src/client/java')
+sourceSets.main.resources.srcDir project(':common').file('src/client/resources')
+
 
 
 repositories {
@@ -86,7 +91,7 @@ dependencies {
 
 publishing {
     publications {
-        mavenJava(MavenPublication) {
+        named('mavenJava', MavenPublication) {
             fg.component(it)
         }
     }
