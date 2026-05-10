@@ -113,38 +113,20 @@ This value is saved with the world save and affects:
 
 ## Common Issues
 
-### A dynamic link library (DLL) initialization routine failed
+## Common Issues
 
-This can happen with old or incompatible Java versions.
+**A dynamic link library (DLL) initialization routine failed**
 
-For Minecraft 1.20.1, use a recent Java **17** runtime. Do not use Java 21 for this backport unless your launcher and mod loader setup explicitly support it.
+This can happen for some older Java versions. Please update to the most recent version of Java 21 or higher. The [latest Microsoft OpenJDK 21](https://learn.microsoft.com/en-us/java/openjdk/download) version is known to work.
 
-### LoadLibrary failed with error 126
+**LoadLibrary failed with error 126** *(CUDA build only)*
 
-This applies to the CUDA build only.
+This is typically due to an improper CUDA or cuDNN installation. See [CUDA_INSTALL.md](CUDA_INSTALL.md) for troubleshooting steps.
 
-It is typically caused by an incorrect CUDA or cuDNN installation. See [CUDA_INSTALL.md](CUDA_INSTALL.md) for troubleshooting steps.
+**java.lang.IllegalStateException: Failed to load terrain-diffusion models**
 
-### java.lang.IllegalStateException: Failed to load terrain-diffusion models
-
-This usually indicates an out-of-memory error. The logs should show the underlying cause.
-
-Terrain Diffusion's models take about 2.5 GB of RAM, so make sure Minecraft has enough allocated memory.
-
-### Forge loads but Fabric API is missing
-
-Fabric API is only required for the Fabric build. Do not install Fabric API on Forge.
-
-For Forge, use the Forge jar produced by the Forge build.
-
-### Fabric says the mod is incompatible
-
-Make sure you are using:
-
-- Minecraft 1.20.1
-- Fabric Loader compatible with Minecraft 1.20.1
-- Fabric API for Minecraft 1.20.1
-- the Fabric jar of this mod, not the Forge jar
+This typically indicates an "out of memory" error (the logs should show this as well).
+Terrain Diffusion's models take up about 2.5GB of RAM, so make sure to allocate enough RAM to account for this.
 
 **If your issue is still not resolved, please [raise it here](https://github.com/xandergos/terrain-diffusion-mc/issues/new).**
 
