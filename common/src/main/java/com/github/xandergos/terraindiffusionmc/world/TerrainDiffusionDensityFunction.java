@@ -4,7 +4,8 @@ import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import com.github.xandergos.terraindiffusionmc.pipeline.LocalTerrainProvider;
 import com.github.xandergos.terraindiffusionmc.pipeline.LocalTerrainProvider.HeightmapData;
 import com.mojang.serialization.MapCodec;
-import net.minecraft.world.gen.densityfunction.DensityFunction;
+import net.minecraft.util.KeyDispatchDataCodec;
+import net.minecraft.world.level.levelgen.DensityFunction;
 
 
 public class TerrainDiffusionDensityFunction implements DensityFunction {
@@ -16,7 +17,7 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
             new TerrainDiffusionDensityFunction();
 
     @Override
-    public double sample(DensityFunction.NoisePos pos) {
+    public double compute(DensityFunction.FunctionContext pos) {
         int x = pos.blockX();
         int z = pos.blockZ();
         int y = pos.blockY();
@@ -77,18 +78,18 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
     }
 
     @Override
-    public void fill(double[] densities, DensityFunction.EachApplier applier) {
+    public void fillArray(double[] densities, DensityFunction.ContextProvider applier) {
         if (densities.length == 0) return;
 
         FillContext ctx = new FillContext();
-        DensityFunction.NoisePos pos = applier.at(0);
+        DensityFunction.FunctionContext pos = applier.forIndex(0);
         int x = pos.blockX();
         int z = pos.blockZ();
         int y = pos.blockY();
         ctx.init(x, z);
 
         for (int i = 0; i < densities.length; i++) {
-            pos = applier.at(i);
+            pos = applier.forIndex(i);
             x = pos.blockX();
             z = pos.blockZ();
             y = pos.blockY();
@@ -110,7 +111,7 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
     }
 
     @Override
-    public DensityFunction apply(DensityFunction.DensityFunctionVisitor visitor) {
+    public DensityFunction mapAll(DensityFunction.Visitor visitor) {
         return visitor.apply(this);
     }
 
@@ -125,7 +126,7 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
     }
 
     @Override
-    public net.minecraft.util.dynamic.CodecHolder<? extends DensityFunction> getCodecHolder() {
-        return net.minecraft.util.dynamic.CodecHolder.of(CODEC);
+    public KeyDispatchDataCodec<? extends DensityFunction> codec() {
+        return KeyDispatchDataCodec.of(CODEC);
     }
 }

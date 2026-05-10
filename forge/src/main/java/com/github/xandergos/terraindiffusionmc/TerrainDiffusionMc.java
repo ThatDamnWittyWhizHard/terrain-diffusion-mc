@@ -2,6 +2,7 @@ package com.github.xandergos.terraindiffusionmc;
 
 import net.minecraft.core.registries.Registries;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.level.LevelEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
@@ -21,13 +22,13 @@ public class TerrainDiffusionMc {
 
     public TerrainDiffusionMc(FMLJavaModLoadingContext context) {
         LOG.info("Initializing terrain-diffusion-mc for Forge");
-        RegisterEvent.getBus(context.getModBusGroup()).addListener(this::onRegister);
+        context.getModEventBus().addListener(this::onRegister);
         TerrainDiffusionLifecycle.bootstrap(FMLPaths.CONFIGDIR.get(), FMLPaths.GAMEDIR.get());
 
-        ServerStartingEvent.BUS.addListener(this::onServerStarting);
-        LevelEvent.Load.BUS.addListener(this::onLevelLoad);
-        ServerStoppingEvent.BUS.addListener(this::onServerStopping);
-        RegisterCommandsEvent.BUS.addListener(this::onRegisterCommands);
+        MinecraftForge.EVENT_BUS.addListener(this::onServerStarting);
+        MinecraftForge.EVENT_BUS.addListener(this::onLevelLoad);
+        MinecraftForge.EVENT_BUS.addListener(this::onServerStopping);
+        MinecraftForge.EVENT_BUS.addListener(this::onRegisterCommands);
     }
 
 

@@ -15,7 +15,7 @@ import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.BiomeSource;
@@ -24,7 +24,6 @@ import com.mojang.serialization.MapCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URI;
 import java.nio.file.Path;
 
 /**
@@ -33,7 +32,7 @@ import java.nio.file.Path;
 public final class TerrainDiffusionLifecycle {
     public static final String MOD_ID = "terrain-diffusion-mc";
     private static final Logger LOG = LoggerFactory.getLogger(TerrainDiffusionLifecycle.class);
-    public static final Identifier TERRAIN_DIFFUSION_ID = Identifier.fromNamespaceAndPath(MOD_ID, "terrain_diffusion");
+    public static final ResourceLocation TERRAIN_DIFFUSION_ID = ResourceLocation.fromNamespaceAndPath(MOD_ID, "terrain_diffusion");
     private static boolean initialized;
 
     private TerrainDiffusionLifecycle() {
@@ -77,7 +76,7 @@ public final class TerrainDiffusionLifecycle {
 
     @FunctionalInterface
     public interface CodecRegistrar<T> {
-        void register(Identifier id, T value);
+        void register(ResourceLocation id, T value);
     }
 
     /**
@@ -116,7 +115,7 @@ public final class TerrainDiffusionLifecycle {
             int port = ExplorerServer.startIfNotRunning();
             String url = "http://localhost:" + port;
             MutableComponent link = Component.literal(url)
-                    .withStyle(s -> s.withClickEvent(new ClickEvent.OpenUrl(URI.create(url)))
+                    .withStyle(s -> s.withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, url))
                             .withUnderlined(true));
             ctx.getSource().sendSuccess(
                     () -> Component.literal("Terrain Explorer: ").append(link),

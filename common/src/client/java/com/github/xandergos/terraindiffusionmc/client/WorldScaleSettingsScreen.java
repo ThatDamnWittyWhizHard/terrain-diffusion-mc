@@ -13,7 +13,7 @@ import net.minecraft.core.HolderGetter;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.dimension.LevelStem;
@@ -148,7 +148,7 @@ public final class WorldScaleSettingsScreen extends Screen {
 
         ResourceKey<DimensionType> dimensionTypeKey = ResourceKey.create(
                 Registries.DIMENSION_TYPE,
-                Identifier.fromNamespaceAndPath(MOD_ID, "terrain_diffusion_scale_" + selectedScale));
+                ResourceLocation.fromNamespaceAndPath(MOD_ID, "terrain_diffusion_scale_" + selectedScale));
         Holder.Reference<DimensionType> selectedDimensionTypeEntry = dimensionTypeRegistry.get(dimensionTypeKey).orElse(null);
         if (selectedDimensionTypeEntry == null) {
             return null;

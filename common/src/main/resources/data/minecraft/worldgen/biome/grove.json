@@ -78,6 +78,8 @@
     [
       "minecraft:glow_lichen",
       "minecraft:trees_grove",
+      "minecraft:patch_grass_forest",
+      "minecraft:patch_tall_grass",
       "minecraft:patch_pumpkin"
     ],
     [

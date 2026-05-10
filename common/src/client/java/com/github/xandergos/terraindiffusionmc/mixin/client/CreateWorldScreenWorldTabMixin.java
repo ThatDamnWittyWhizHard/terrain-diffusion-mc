@@ -6,7 +6,7 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.worldselection.CreateWorldScreen;
 import net.minecraft.client.gui.screens.worldselection.WorldCreationUiState;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.levelgen.presets.WorldPreset;
 import org.spongepowered.asm.mixin.Final;
@@ -30,7 +30,7 @@ public abstract class CreateWorldScreenWorldTabMixin {
     private CreateWorldScreen terrainDiffusionMc$createWorldScreen;
 
     private static final ResourceKey<WorldPreset> TERRAIN_DIFFUSION_PRESET_KEY =
-            ResourceKey.create(Registries.WORLD_PRESET, Identifier.fromNamespaceAndPath("terrain-diffusion-mc", "terrain_diffusion"));
+            ResourceKey.create(Registries.WORLD_PRESET, ResourceLocation.fromNamespaceAndPath("terrain-diffusion-mc", "terrain_diffusion"));
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void terrainDiffusionMc$captureCreateWorldScreen(CreateWorldScreen createWorldScreen, CallbackInfo callbackInfo) {

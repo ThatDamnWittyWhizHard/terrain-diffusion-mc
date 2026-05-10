@@ -206,19 +206,31 @@ subprojects { subproject ->
 
     subproject.plugins.withId('net.neoforged.moddev') {
         if (subproject.name in rootProject.ext.terrainDiffusionLoaderProjects) {
-            subproject.dependencies {
-                String buildVariant = subproject.ext.terrainDiffusionBuildVariant
-                def onnxModule = rootProject.ext.terrainDiffusionOnnxModule(buildVariant)
-                jarJar(implementation("${onnxModule.group}:${onnxModule.name}")) {
-                    version {
-                        strictly "[${onnxModule.version}]"
-                        prefer onnxModule.version
+            // ModDevGradle creates additionalRuntimeClasspath only after its NeoForge
+            // extension has been configured. Defer this block so :neoforge/build.gradle
+            // can finish its neoForge { version = ... } configuration first.
+            subproject.afterEvaluate {
+                subproject.dependencies {
+                    String buildVariant = subproject.ext.terrainDiffusionBuildVariant
+                    def onnxModule = rootProject.ext.terrainDiffusionOnnxModule(buildVariant)
+                    def onnxNotation = "${onnxModule.group}:${onnxModule.name}:${onnxModule.version}"
+
+                    // Needed by NeoForge 1.21.1 development runs. Jar-in-Jar handles
+                    // production packaging but dev runs on 1.21.8 and below also need
+                    // non-Minecraft libraries on additionalRuntimeClasspath.
+                    add('additionalRuntimeClasspath', onnxNotation)
+
+                    jarJar(implementation("${onnxModule.group}:${onnxModule.name}")) {
+                        version {
+                            strictly "[${onnxModule.version}]"
+                            prefer onnxModule.version
+                        }
                     }
                 }
-            }
 
-            subproject.tasks.named('build') {
-                dependsOn subproject.tasks.named('jarJar')
+                subproject.tasks.named('build') {
+                    dependsOn subproject.tasks.named('jarJar')
+                }
             }
         }
     }
