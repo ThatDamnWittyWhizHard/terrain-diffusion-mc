@@ -37,7 +37,7 @@ public final class TerrainRiverVectorBuilder {
             }
         }
 
-        TerrainRiverNetwork raw = new TerrainRiverNetwork(
+        return new TerrainRiverNetwork(
                 river.blockStartX(),
                 river.blockStartZ(),
                 river.width(),
@@ -46,7 +46,6 @@ public final class TerrainRiverVectorBuilder {
                 List.copyOf(context.segments),
                 river.maxAccumulation()
         );
-        return mergeNearbyParallelSegments(raw);
     }
 
     public static TerrainRiverNetwork buildCropped(
@@ -407,185 +406,6 @@ public final class TerrainRiverVectorBuilder {
                     downstreamDirection
             ));
         }
-    }
-
-
-    private static TerrainRiverNetwork mergeNearbyParallelSegments(TerrainRiverNetwork network) {
-        if (network.segments().size() <= 1) {
-            return network;
-        }
-
-        boolean[] removed = new boolean[network.segments().size()];
-        for (int i = 0; i < network.segments().size(); i++) {
-            if (removed[i]) {
-                continue;
-            }
-
-            TerrainRiverNetwork.Segment a = network.segments().get(i);
-            for (int j = i + 1; j < network.segments().size(); j++) {
-                if (removed[j]) {
-                    continue;
-                }
-
-                TerrainRiverNetwork.Segment b = network.segments().get(j);
-                int strongerIndex = strongerSegmentIndex(a, b) == 0 ? i : j;
-                int weakerIndex = strongerIndex == i ? j : i;
-                TerrainRiverNetwork.Segment stronger = network.segments().get(strongerIndex);
-                TerrainRiverNetwork.Segment weaker = network.segments().get(weakerIndex);
-
-                if (shouldCollapseParallelSegment(stronger, weaker)) {
-                    removed[weakerIndex] = true;
-                }
-            }
-        }
-
-        List<TerrainRiverNetwork.Segment> kept = new ArrayList<>();
-        for (int i = 0; i < network.segments().size(); i++) {
-            if (removed[i]) {
-                continue;
-            }
-
-            TerrainRiverNetwork.Segment segment = network.segments().get(i);
-            kept.add(new TerrainRiverNetwork.Segment(
-                    kept.size(),
-                    segment.startNodeId(),
-                    segment.endNodeId(),
-                    segment.points(),
-                    segment.meanAccumulation(),
-                    segment.maxAccumulation(),
-                    segment.meanWidthBlocks(),
-                    segment.maxWidthBlocks(),
-                    segment.depthBlocks(),
-                    segment.downstreamDirection()
-            ));
-        }
-
-        return new TerrainRiverNetwork(
-                network.blockStartX(),
-                network.blockStartZ(),
-                network.width(),
-                network.height(),
-                network.nodes(),
-                List.copyOf(kept),
-                network.maxAccumulation()
-        );
-    }
-
-    private static int strongerSegmentIndex(TerrainRiverNetwork.Segment a, TerrainRiverNetwork.Segment b) {
-        int byAccumulation = Float.compare(a.maxAccumulation(), b.maxAccumulation());
-        if (Math.abs(a.maxAccumulation() - b.maxAccumulation()) > 1.0E-3F) {
-            return byAccumulation >= 0 ? 0 : 1;
-        }
-
-        int byWidth = Float.compare(a.maxWidthBlocks(), b.maxWidthBlocks());
-        if (Math.abs(a.maxWidthBlocks() - b.maxWidthBlocks()) > 1.0E-3F) {
-            return byWidth >= 0 ? 0 : 1;
-        }
-
-        return pathLength(a.points()) >= pathLength(b.points()) ? 0 : 1;
-    }
-
-    private static boolean shouldCollapseParallelSegment(TerrainRiverNetwork.Segment stronger, TerrainRiverNetwork.Segment weaker) {
-        if (stronger.points().size() < 2 || weaker.points().size() < 2) {
-            return false;
-        }
-
-        if (weaker.maxAccumulation() > stronger.maxAccumulation() * TerrainRiverVectorConfig.PARALLEL_MERGE_MAX_RELATIVE_DISCHARGE) {
-            return false;
-        }
-
-        double dot = directionDot(stronger.points(), weaker.points());
-        if (dot < TerrainRiverVectorConfig.PARALLEL_MERGE_MIN_DIRECTION_DOT) {
-            return false;
-        }
-
-        double radius = TerrainRiverVectorConfig.PARALLEL_MERGE_RADIUS_BLOCKS
-                + Math.min(stronger.maxWidthBlocks(), weaker.maxWidthBlocks()) * 0.25D;
-        double radiusSquared = radius * radius;
-        double endpointRadius = radius * TerrainRiverVectorConfig.PARALLEL_MERGE_ENDPOINT_RADIUS_MULTIPLIER;
-        double endpointRadiusSquared = endpointRadius * endpointRadius;
-
-        NearestPoint startNearest = nearestPointOnPolyline(weaker.points().get(0), stronger.points());
-        NearestPoint endNearest = nearestPointOnPolyline(weaker.points().get(weaker.points().size() - 1), stronger.points());
-        if (startNearest.distanceSquared() > endpointRadiusSquared || endNearest.distanceSquared() > endpointRadiusSquared) {
-            return false;
-        }
-
-        int near = 0;
-        int checked = 0;
-        int verticalDeltaSum = 0;
-
-        for (TerrainRiverNetwork.Point point : weaker.points()) {
-            NearestPoint nearest = nearestPointOnPolyline(point, stronger.points());
-            if (nearest.distanceSquared() <= radiusSquared) {
-                near++;
-                verticalDeltaSum += Math.abs(point.surfaceY() - nearest.surfaceY());
-            }
-            checked++;
-        }
-
-        if (checked == 0) {
-            return false;
-        }
-
-        float nearFraction = near / (float) checked;
-        if (nearFraction < TerrainRiverVectorConfig.PARALLEL_MERGE_MIN_NEAR_FRACTION) {
-            return false;
-        }
-
-        float meanVerticalDelta = near == 0 ? Float.MAX_VALUE : verticalDeltaSum / (float) near;
-        return meanVerticalDelta <= TerrainRiverVectorConfig.PARALLEL_MERGE_MAX_VERTICAL_DELTA_BLOCKS;
-    }
-
-    private static double directionDot(List<TerrainRiverNetwork.Point> a, List<TerrainRiverNetwork.Point> b) {
-        TerrainRiverNetwork.Point a0 = a.get(0);
-        TerrainRiverNetwork.Point a1 = a.get(a.size() - 1);
-        TerrainRiverNetwork.Point b0 = b.get(0);
-        TerrainRiverNetwork.Point b1 = b.get(b.size() - 1);
-
-        double ax = a1.worldX() - a0.worldX();
-        double az = a1.worldZ() - a0.worldZ();
-        double bx = b1.worldX() - b0.worldX();
-        double bz = b1.worldZ() - b0.worldZ();
-        double al = Math.sqrt(ax * ax + az * az);
-        double bl = Math.sqrt(bx * bx + bz * bz);
-        if (al <= 1.0E-6D || bl <= 1.0E-6D) {
-            return 0.0D;
-        }
-
-        return (ax * bx + az * bz) / (al * bl);
-    }
-
-    private static NearestPoint nearestPointOnPolyline(TerrainRiverNetwork.Point point, List<TerrainRiverNetwork.Point> polyline) {
-        double bestDistanceSquared = Double.MAX_VALUE;
-        int bestSurfaceY = point.surfaceY();
-
-        for (int i = 0; i < polyline.size() - 1; i++) {
-            TerrainRiverNetwork.Point a = polyline.get(i);
-            TerrainRiverNetwork.Point b = polyline.get(i + 1);
-            Projection projection = projectToSegment(point.worldX(), point.worldZ(), a, b);
-            if (projection.distanceSquared() < bestDistanceSquared) {
-                bestDistanceSquared = projection.distanceSquared();
-                bestSurfaceY = projection.surfaceY();
-            }
-        }
-
-        return new NearestPoint(bestDistanceSquared, bestSurfaceY);
-    }
-
-    private static Projection projectToSegment(double px, double pz, TerrainRiverNetwork.Point a, TerrainRiverNetwork.Point b) {
-        double vx = b.worldX() - a.worldX();
-        double vz = b.worldZ() - a.worldZ();
-        double wx = px - a.worldX();
-        double wz = pz - a.worldZ();
-        double lengthSquared = vx * vx + vz * vz;
-        double t = lengthSquared <= 1.0E-9D ? 0.0D : Math.max(0.0D, Math.min(1.0D, (wx * vx + wz * vz) / lengthSquared));
-        double cx = a.worldX() + vx * t;
-        double cz = a.worldZ() + vz * t;
-        double dx = px - cx;
-        double dz = pz - cz;
-        int surfaceY = (int) Math.round(a.surfaceY() + (b.surfaceY() - a.surfaceY()) * t);
-        return new Projection(dx * dx + dz * dz, surfaceY);
     }
 
     private static final class CroppedNetworkBuilder {
@@ -964,14 +784,6 @@ public final class TerrainRiverVectorBuilder {
         }
     }
 
-    private static double pathLength(List<TerrainRiverNetwork.Point> points) {
-        double result = 0.0D;
-        for (int i = 0; i < points.size() - 1; i++) {
-            result += distance(points.get(i), points.get(i + 1));
-        }
-        return result;
-    }
-
     private static double distance(TerrainRiverNetwork.Point a, TerrainRiverNetwork.Point b) {
         double dx = a.worldX() - b.worldX();
         double dz = a.worldZ() - b.worldZ();
@@ -990,12 +802,6 @@ public final class TerrainRiverVectorBuilder {
 
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
-    }
-
-    private record NearestPoint(double distanceSquared, int surfaceY) {
-    }
-
-    private record Projection(double distanceSquared, int surfaceY) {
     }
 
     private record ClippedSegment(TerrainRiverNetwork.Point start, TerrainRiverNetwork.Point end) {
