@@ -9,6 +9,7 @@ import net.minecraft.gizmos.Gizmos;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 
+
 public final class TerrainDebugOverlayRendererCore {
     private TerrainDebugOverlayRendererCore() {
     }
@@ -53,14 +54,19 @@ public final class TerrainDebugOverlayRendererCore {
                 continue;
             }
 
-            int color = riverWidthVectorColor(segment.maxWidthBlocks());
+            int affluentCount = segment.upstreamAffluentCount();
+            int color = riverAffluentVectorColor(affluentCount);
             float width = riverTraceLineWidth(segment);
             for (int i = 0; i < segment.points().size() - 1; i++) {
                 Vec3 a = vectorPoint(segment.points().get(i));
                 Vec3 b = vectorPoint(segment.points().get(i + 1));
                 Gizmos.line(a, b, color, width);
             }
+
+            emitSegmentAffluentTicks(segment, affluentCount, color);
         }
+
+        emitConfluenceAffluentMarkers(network);
     }
 
     private static Vec3 vectorPoint(TerrainRiverNetwork.Point point) {
@@ -76,18 +82,96 @@ public final class TerrainDebugOverlayRendererCore {
         return Mth.clamp(0.42F + n * 2.75F, 0.42F, 3.10F);
     }
 
-    private static int riverWidthVectorColor(float widthBlocks) {
-        float value = widthVisualNormalized(widthBlocks);
-        if (value < 0.33F) {
-            float t = value / 0.33F;
-            return argb(255, lerp(20, 25, t), lerp(90, 175, t), lerp(225, 255, t));
+    private static void emitSegmentAffluentTicks(TerrainRiverNetwork.Segment segment, int affluentCount, int color) {
+        int visibleTicks = Math.min(affluentCount, 5);
+        if (visibleTicks <= 0 || segment.points().size() < 3) {
+            return;
         }
-        if (value < 0.66F) {
-            float t = (value - 0.33F) / 0.33F;
-            return argb(255, lerp(25, 245, t), lerp(175, 220, t), lerp(255, 55, t));
+
+        TerrainRiverNetwork.Point center = segment.points().get(segment.points().size() / 2);
+        byte direction = center.direction();
+        if (direction < 0) {
+            direction = segment.downstreamDirection();
         }
-        float t = (value - 0.66F) / 0.34F;
-        return argb(255, lerp(245, 255, t), lerp(220, 115, t), lerp(55, 25, t));
+        if (direction < 0) {
+            return;
+        }
+
+        Vec3 middle = vectorPoint(center).add(0.0D, 0.28D, 0.0D);
+        double perpX = -directionZ(direction);
+        double perpZ = directionX(direction);
+        double length = Math.sqrt(perpX * perpX + perpZ * perpZ);
+        if (length <= 1.0E-6D) {
+            return;
+        }
+        perpX /= length;
+        perpZ /= length;
+
+        double halfLength = Math.max(0.42D, Math.min(1.45D, center.widthBlocks() * 0.28D));
+        double spacing = 0.32D;
+        double startOffset = -(visibleTicks - 1) * spacing * 0.5D;
+        for (int i = 0; i < visibleTicks; i++) {
+            double along = startOffset + i * spacing;
+            double tangentX = directionX(direction);
+            double tangentZ = directionZ(direction);
+            Vec3 a = middle.add(tangentX * along - perpX * halfLength, 0.0D, tangentZ * along - perpZ * halfLength);
+            Vec3 b = middle.add(tangentX * along + perpX * halfLength, 0.0D, tangentZ * along + perpZ * halfLength);
+            Gizmos.line(a, b, color, 1.20F);
+        }
+    }
+
+    private static void emitConfluenceAffluentMarkers(TerrainRiverNetwork network) {
+        for (TerrainRiverNetwork.Node node : network.nodes()) {
+            int directAffluents = node.directAffluentCount();
+            if (directAffluents <= 0) {
+                continue;
+            }
+
+            int color = riverAffluentVectorColor(directAffluents);
+            Vec3 base = new Vec3(
+                    node.worldX(),
+                    node.surfaceY() + TerrainDebugOverlayState.yOffset() + 1.05D,
+                    node.worldZ()
+            );
+            double height = 0.75D + Math.min(directAffluents, 6) * 0.28D;
+            Vec3 top = base.add(0.0D, height, 0.0D);
+            Gizmos.line(base, top, color, 1.55F);
+
+            int spokes = Math.min(directAffluents, 6);
+            double radius = 0.58D + Math.min(directAffluents, 4) * 0.13D;
+            for (int i = 0; i < spokes; i++) {
+                double angle = (Math.PI * 2.0D * i) / spokes;
+                Vec3 end = top.add(Math.cos(angle) * radius, 0.0D, Math.sin(angle) * radius);
+                Gizmos.line(top, end, color, 1.25F);
+            }
+        }
+    }
+
+    private static int riverAffluentVectorColor(int affluentCount) {
+        return switch (Math.min(Math.max(affluentCount, 0), 5)) {
+            case 0 -> argb(255, 35, 145, 255);
+            case 1 -> argb(255, 40, 235, 215);
+            case 2 -> argb(255, 105, 245, 70);
+            case 3 -> argb(255, 255, 225, 45);
+            case 4 -> argb(255, 255, 135, 35);
+            default -> argb(255, 255, 45, 180);
+        };
+    }
+
+    private static int directionX(byte direction) {
+        return switch (direction) {
+            case 1, 2, 3 -> 1;
+            case 5, 6, 7 -> -1;
+            default -> 0;
+        };
+    }
+
+    private static int directionZ(byte direction) {
+        return switch (direction) {
+            case 3, 4, 5 -> 1;
+            case 7, 0, 1 -> -1;
+            default -> 0;
+        };
     }
 
     private static float widthVisualNormalized(float widthBlocks) {
@@ -110,10 +194,6 @@ public final class TerrainDebugOverlayRendererCore {
             return 1.0F;
         }
         return value;
-    }
-
-    private static int lerp(int a, int b, float t) {
-        return Mth.clamp(Math.round(a + (b - a) * t), 0, 255);
     }
 
     private static int argb(int a, int r, int g, int b) {

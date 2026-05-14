@@ -28,7 +28,8 @@ public record TerrainRiverNetwork(
             int surfaceY,
             NodeType type,
             float accumulation,
-            float widthBlocks
+            float widthBlocks,
+            int directAffluentCount
     ) {
     }
 
@@ -53,7 +54,8 @@ public record TerrainRiverNetwork(
             float meanWidthBlocks,
             float maxWidthBlocks,
             float depthBlocks,
-            byte downstreamDirection
+            byte downstreamDirection,
+            int upstreamAffluentCount
     ) {
     }
 }

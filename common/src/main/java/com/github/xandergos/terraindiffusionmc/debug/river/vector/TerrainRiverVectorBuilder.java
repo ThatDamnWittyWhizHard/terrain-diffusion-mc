@@ -5,8 +5,10 @@ import com.github.xandergos.terraindiffusionmc.debug.river.TerrainRiverTile;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public final class TerrainRiverVectorBuilder {
     private static final int[] DIR_X = {0, 1, 1, 1, 0, -1, -1, -1};
@@ -37,7 +39,7 @@ public final class TerrainRiverVectorBuilder {
             }
         }
 
-        return new TerrainRiverNetwork(
+        TerrainRiverNetwork network = new TerrainRiverNetwork(
                 river.blockStartX(),
                 river.blockStartZ(),
                 river.width(),
@@ -46,6 +48,7 @@ public final class TerrainRiverVectorBuilder {
                 List.copyOf(context.segments),
                 river.maxAccumulation()
         );
+        return withAffluentCounts(network);
     }
 
     public static TerrainRiverNetwork buildCropped(
@@ -78,17 +81,19 @@ public final class TerrainRiverVectorBuilder {
                 continue;
             }
 
-            int startNodeId = builder.ensureNode(clipped.get(0), nodeTypeForCroppedEndpoint(segment, network, clipped.get(0), true, minX, minZ, maxX, maxZ));
-            int endNodeId = builder.ensureNode(clipped.get(clipped.size() - 1), nodeTypeForCroppedEndpoint(segment, network, clipped.get(clipped.size() - 1), false, minX, minZ, maxX, maxZ));
+            CroppedEndpointInfo startInfo = croppedEndpointInfo(segment, network, clipped.get(0), true, minX, minZ, maxX, maxZ);
+            CroppedEndpointInfo endInfo = croppedEndpointInfo(segment, network, clipped.get(clipped.size() - 1), false, minX, minZ, maxX, maxZ);
+            int startNodeId = builder.ensureNode(clipped.get(0), startInfo.type(), startInfo.directAffluentCount());
+            int endNodeId = builder.ensureNode(clipped.get(clipped.size() - 1), endInfo.type(), endInfo.directAffluentCount());
             if (startNodeId != endNodeId) {
-                builder.addSegment(startNodeId, endNodeId, clipped, segment.downstreamDirection());
+                builder.addSegment(startNodeId, endNodeId, clipped, segment.downstreamDirection(), segment.upstreamAffluentCount());
             }
         }
 
         return builder.build();
     }
 
-    private static TerrainRiverNetwork.NodeType nodeTypeForCroppedEndpoint(
+    private static CroppedEndpointInfo croppedEndpointInfo(
             TerrainRiverNetwork.Segment segment,
             TerrainRiverNetwork network,
             TerrainRiverNetwork.Point point,
@@ -98,18 +103,23 @@ public final class TerrainRiverVectorBuilder {
             double maxX,
             double maxZ
     ) {
-        if (onBoundary(point.worldX(), point.worldZ(), minX, minZ, maxX, maxZ)) {
-            return TerrainRiverNetwork.NodeType.BOUNDARY;
-        }
-
         TerrainRiverNetwork.Node original = network.nodes().stream()
                 .filter(node -> node.id() == (start ? segment.startNodeId() : segment.endNodeId()))
                 .findFirst()
                 .orElse(null);
+
+        int directAffluentCount = 0;
+        TerrainRiverNetwork.NodeType type = TerrainRiverNetwork.NodeType.INTERNAL;
         if (original != null && closeEnough(original.worldX(), original.worldZ(), point.worldX(), point.worldZ())) {
-            return original.type();
+            directAffluentCount = original.directAffluentCount();
+            type = original.type();
         }
-        return TerrainRiverNetwork.NodeType.INTERNAL;
+
+        if (onBoundary(point.worldX(), point.worldZ(), minX, minZ, maxX, maxZ)) {
+            type = TerrainRiverNetwork.NodeType.BOUNDARY;
+        }
+
+        return new CroppedEndpointInfo(type, directAffluentCount);
     }
 
     private static boolean isSegmentStart(TerrainRiverTile river, int x, int z) {
@@ -244,7 +254,8 @@ public final class TerrainRiverVectorBuilder {
                     river.surfaceYAtLocal(x, z),
                     nodeType(river, x, z),
                     river.accumulationAt(x, z),
-                    river.widthBlocksAt(x, z)
+                    river.widthBlocksAt(x, z),
+                    0
             );
 
             nodes.add(node);
@@ -403,9 +414,133 @@ public final class TerrainRiverVectorBuilder {
                     stats.meanWidthBlocks(),
                     stats.maxWidthBlocks(),
                     stats.depthBlocks(),
-                    downstreamDirection
+                    downstreamDirection,
+                    0
             ));
         }
+    }
+
+    private static TerrainRiverNetwork withAffluentCounts(TerrainRiverNetwork network) {
+        AffluentCounter counter = new AffluentCounter(network);
+        List<TerrainRiverNetwork.Node> nodes = new ArrayList<>();
+        for (TerrainRiverNetwork.Node node : network.nodes()) {
+            nodes.add(new TerrainRiverNetwork.Node(
+                    node.id(),
+                    node.localX(),
+                    node.localZ(),
+                    node.worldX(),
+                    node.worldZ(),
+                    node.surfaceY(),
+                    node.type(),
+                    node.accumulation(),
+                    node.widthBlocks(),
+                    counter.directAffluentCount(node.id())
+            ));
+        }
+
+        List<TerrainRiverNetwork.Segment> segments = new ArrayList<>();
+        for (TerrainRiverNetwork.Segment segment : network.segments()) {
+            segments.add(new TerrainRiverNetwork.Segment(
+                    segment.id(),
+                    segment.startNodeId(),
+                    segment.endNodeId(),
+                    segment.points(),
+                    segment.meanAccumulation(),
+                    segment.maxAccumulation(),
+                    segment.meanWidthBlocks(),
+                    segment.maxWidthBlocks(),
+                    segment.depthBlocks(),
+                    segment.downstreamDirection(),
+                    counter.upstreamAffluentCount(segment.id())
+            ));
+        }
+
+        return new TerrainRiverNetwork(
+                network.blockStartX(),
+                network.blockStartZ(),
+                network.width(),
+                network.height(),
+                List.copyOf(nodes),
+                List.copyOf(segments),
+                network.maxAccumulation()
+        );
+    }
+
+    private static final class AffluentCounter {
+        private final Map<Integer, List<TerrainRiverNetwork.Segment>> incomingByNodeId = new HashMap<>();
+        private final Map<Integer, Integer> directAffluentCountsByNodeId = new HashMap<>();
+        private final Map<Integer, Integer> upstreamAffluentCountsBySegmentId = new HashMap<>();
+        private final Set<Integer> visitingSegmentIds = new HashSet<>();
+
+        private AffluentCounter(TerrainRiverNetwork network) {
+            for (TerrainRiverNetwork.Segment segment : network.segments()) {
+                incomingByNodeId.computeIfAbsent(segment.endNodeId(), ignored -> new ArrayList<>()).add(segment);
+            }
+
+            for (Map.Entry<Integer, List<TerrainRiverNetwork.Segment>> entry : incomingByNodeId.entrySet()) {
+                int incomingCount = entry.getValue().size();
+                if (incomingCount > 1) {
+                    directAffluentCountsByNodeId.put(entry.getKey(), incomingCount - 1);
+                }
+            }
+
+            for (TerrainRiverNetwork.Segment segment : network.segments()) {
+                upstreamAffluentCountsBySegmentId.put(segment.id(), computeUpstreamAffluentCount(segment));
+            }
+        }
+
+        private int directAffluentCount(int nodeId) {
+            return directAffluentCountsByNodeId.getOrDefault(nodeId, 0);
+        }
+
+        private int upstreamAffluentCount(int segmentId) {
+            return upstreamAffluentCountsBySegmentId.getOrDefault(segmentId, 0);
+        }
+
+        private int computeUpstreamAffluentCount(TerrainRiverNetwork.Segment segment) {
+            Integer cached = upstreamAffluentCountsBySegmentId.get(segment.id());
+            if (cached != null) {
+                return cached;
+            }
+            if (!visitingSegmentIds.add(segment.id())) {
+                return 0;
+            }
+
+            List<TerrainRiverNetwork.Segment> upstreamSegments = incomingByNodeId.getOrDefault(segment.startNodeId(), List.of());
+            if (upstreamSegments.isEmpty()) {
+                visitingSegmentIds.remove(segment.id());
+                upstreamAffluentCountsBySegmentId.put(segment.id(), 0);
+                return 0;
+            }
+
+            TerrainRiverNetwork.Segment mainStem = strongest(upstreamSegments);
+            int count = computeUpstreamAffluentCount(mainStem);
+            for (TerrainRiverNetwork.Segment upstream : upstreamSegments) {
+                if (upstream.id() == mainStem.id()) {
+                    continue;
+                }
+                count += 1 + computeUpstreamAffluentCount(upstream);
+            }
+
+            visitingSegmentIds.remove(segment.id());
+            count = Math.min(count, 99);
+            upstreamAffluentCountsBySegmentId.put(segment.id(), count);
+            return count;
+        }
+
+        private static TerrainRiverNetwork.Segment strongest(List<TerrainRiverNetwork.Segment> segments) {
+            TerrainRiverNetwork.Segment best = segments.get(0);
+            for (int i = 1; i < segments.size(); i++) {
+                TerrainRiverNetwork.Segment candidate = segments.get(i);
+                if (candidate.maxAccumulation() > best.maxAccumulation()) {
+                    best = candidate;
+                }
+            }
+            return best;
+        }
+    }
+
+    private record CroppedEndpointInfo(TerrainRiverNetwork.NodeType type, int directAffluentCount) {
     }
 
     private static final class CroppedNetworkBuilder {
@@ -426,7 +561,7 @@ public final class TerrainRiverVectorBuilder {
             this.height = height;
         }
 
-        private int ensureNode(TerrainRiverNetwork.Point point, TerrainRiverNetwork.NodeType type) {
+        private int ensureNode(TerrainRiverNetwork.Point point, TerrainRiverNetwork.NodeType type, int directAffluentCount) {
             CroppedNodeKey key = CroppedNodeKey.from(point);
             Integer existing = nodeIdsByKey.get(key);
             if (existing != null) {
@@ -445,13 +580,14 @@ public final class TerrainRiverVectorBuilder {
                     point.surfaceY(),
                     type,
                     point.accumulation(),
-                    point.widthBlocks()
+                    point.widthBlocks(),
+                    directAffluentCount
             ));
             nodeIdsByKey.put(key, id);
             return id;
         }
 
-        private void addSegment(int startNodeId, int endNodeId, List<TerrainRiverNetwork.Point> points, byte downstreamDirection) {
+        private void addSegment(int startNodeId, int endNodeId, List<TerrainRiverNetwork.Point> points, byte downstreamDirection, int upstreamAffluentCount) {
             SegmentStats stats = SegmentStats.from(points);
             segments.add(new TerrainRiverNetwork.Segment(
                     segments.size(),
@@ -463,7 +599,8 @@ public final class TerrainRiverVectorBuilder {
                     stats.meanWidthBlocks(),
                     stats.maxWidthBlocks(),
                     stats.depthBlocks(),
-                    downstreamDirection
+                    downstreamDirection,
+                    upstreamAffluentCount
             ));
         }
 
