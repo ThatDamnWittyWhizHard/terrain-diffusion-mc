@@ -49,6 +49,8 @@ public final class TerrainDebugOverlayRendererCore {
     }
 
     private static void emitRiverTraceWidth(TerrainRiverNetwork network) {
+        emitLakeAccumulations(network);
+
         for (TerrainRiverNetwork.Segment segment : network.segments()) {
             if (segment.points().size() < 2) {
                 continue;
@@ -67,6 +69,87 @@ public final class TerrainDebugOverlayRendererCore {
         }
 
         emitConfluenceAffluentMarkers(network);
+    }
+
+    private static void emitLakeAccumulations(TerrainRiverNetwork network) {
+        for (TerrainRiverNetwork.Lake lake : network.lakes()) {
+            int fillColor = lakeAccumulationColor(lake.maxAccumulation(), network.maxAccumulation(), 150);
+            int edgeColor = lakeAccumulationColor(lake.maxAccumulation(), network.maxAccumulation(), 230);
+            float lineWidth = lakeRunLineWidth(lake);
+
+            for (TerrainRiverNetwork.LakeRun run : lake.runs()) {
+                double y = run.waterLevelY() + TerrainDebugOverlayState.yOffset() + 0.46D;
+                double z = run.worldZ() + 0.5D;
+                Vec3 a = new Vec3(run.startWorldX(), y, z);
+                Vec3 b = new Vec3(run.endWorldX(), y, z);
+                Gizmos.line(a, b, fillColor, lineWidth);
+            }
+
+            emitLakeBoundary(lake, edgeColor);
+            emitLakeOutletMarker(lake, edgeColor);
+        }
+    }
+
+    private static void emitLakeBoundary(TerrainRiverNetwork.Lake lake, int color) {
+        for (TerrainRiverNetwork.LakeRun run : lake.runs()) {
+            if (isBoundaryRun(lake, run, -1)) {
+                emitLakeEdge(run.startWorldX(), run.endWorldX(), run.worldZ(), run.waterLevelY(), color);
+            }
+            if (isBoundaryRun(lake, run, 1)) {
+                emitLakeEdge(run.startWorldX(), run.endWorldX(), run.worldZ() + 1, run.waterLevelY(), color);
+            }
+        }
+    }
+
+    private static void emitLakeEdge(int startX, int endX, int z, float waterLevelY, int color) {
+        double y = waterLevelY + TerrainDebugOverlayState.yOffset() + 0.62D;
+        Gizmos.line(new Vec3(startX, y, z), new Vec3(endX, y, z), color, 1.30F);
+    }
+
+    private static boolean isBoundaryRun(TerrainRiverNetwork.Lake lake, TerrainRiverNetwork.LakeRun run, int dz) {
+        int neighborZ = run.worldZ() + dz;
+        for (TerrainRiverNetwork.LakeRun other : lake.runs()) {
+            if (other.worldZ() != neighborZ) {
+                continue;
+            }
+            if (other.startWorldX() <= run.startWorldX() && other.endWorldX() >= run.endWorldX()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void emitLakeOutletMarker(TerrainRiverNetwork.Lake lake, int color) {
+        if (lake.outletWorldX() == Integer.MIN_VALUE || lake.outletWorldZ() == Integer.MIN_VALUE) {
+            return;
+        }
+
+        double y = lake.waterLevelY() + TerrainDebugOverlayState.yOffset() + 0.82D;
+        Vec3 center = new Vec3(lake.outletWorldX() + 0.5D, y, lake.outletWorldZ() + 0.5D);
+        double radius = Math.max(0.85D, Math.min(2.40D, Math.sqrt(Math.max(1, lake.surfaceCellCount())) * 0.08D));
+        Gizmos.line(center.add(-radius, 0.0D, 0.0D), center.add(radius, 0.0D, 0.0D), color, 1.75F);
+        Gizmos.line(center.add(0.0D, 0.0D, -radius), center.add(0.0D, 0.0D, radius), color, 1.75F);
+        Gizmos.line(center, center.add(0.0D, 0.75D + Math.min(5, lake.inflowCount()) * 0.18D, 0.0D), color, 1.55F);
+    }
+
+    private static float lakeRunLineWidth(TerrainRiverNetwork.Lake lake) {
+        float depth = Mth.clamp(lake.meanDepthBlocks(), 0.5F, 8.0F);
+        return Mth.clamp(1.30F + depth * 0.22F, 1.30F, 3.20F);
+    }
+
+    private static int lakeAccumulationColor(float accumulation, float maxAccumulation, int alpha) {
+        float t = (float) Math.sqrt(clamp01(logNormalize(accumulation, maxAccumulation)));
+        int r = (int) lerp(t, 45.0F, 40.0F);
+        int g = (int) lerp(t, 105.0F, 245.0F);
+        int b = (int) lerp(t, 255.0F, 255.0F);
+        return argb(alpha, r, g, b);
+    }
+
+    private static float logNormalize(float value, float maxValue) {
+        double denominator = Math.log1p(Math.max(1.0F, maxValue));
+        return denominator <= 0.0D
+                ? 0.0F
+                : clamp01((float) (Math.log1p(Math.max(0.0F, value)) / denominator));
     }
 
     private static Vec3 vectorPoint(TerrainRiverNetwork.Point point) {
@@ -194,6 +277,10 @@ public final class TerrainDebugOverlayRendererCore {
             return 1.0F;
         }
         return value;
+    }
+
+    private static float lerp(float t, float a, float b) {
+        return a + (b - a) * t;
     }
 
     private static int argb(int a, int r, int g, int b) {

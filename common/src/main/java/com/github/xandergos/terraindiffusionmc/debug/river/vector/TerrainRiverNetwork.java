@@ -9,6 +9,7 @@ public record TerrainRiverNetwork(
         int height,
         List<Node> nodes,
         List<Segment> segments,
+        List<Lake> lakes,
         float maxAccumulation
 ) {
     public enum NodeType {
@@ -56,6 +57,32 @@ public record TerrainRiverNetwork(
             float depthBlocks,
             byte downstreamDirection,
             int upstreamAffluentCount
+    ) {
+    }
+
+    public record Lake(
+            int id,
+            List<LakeRun> runs,
+            double centerWorldX,
+            double centerWorldZ,
+            float waterLevelY,
+            float meanDepthBlocks,
+            float maxDepthBlocks,
+            float maxAccumulation,
+            int surfaceCellCount,
+            int inflowCount,
+            int outletWorldX,
+            int outletWorldZ
+    ) {
+    }
+
+    public record LakeRun(
+            int startWorldX,
+            int endWorldX,
+            int worldZ,
+            float waterLevelY,
+            float meanDepthBlocks,
+            float maxAccumulation
     ) {
     }
 }

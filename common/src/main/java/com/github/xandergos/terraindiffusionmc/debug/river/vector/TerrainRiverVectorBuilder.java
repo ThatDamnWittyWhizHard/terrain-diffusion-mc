@@ -3,11 +3,13 @@ package com.github.xandergos.terraindiffusionmc.debug.river.vector;
 import com.github.xandergos.terraindiffusionmc.debug.river.TerrainRiverConfig;
 import com.github.xandergos.terraindiffusionmc.debug.river.TerrainRiverTile;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 
 public final class TerrainRiverVectorBuilder {
@@ -46,6 +48,7 @@ public final class TerrainRiverVectorBuilder {
                 river.height(),
                 List.copyOf(context.nodes),
                 List.copyOf(context.segments),
+                buildLakes(river),
                 river.maxAccumulation()
         );
         return withAffluentCounts(network);
@@ -90,7 +93,293 @@ public final class TerrainRiverVectorBuilder {
             }
         }
 
+        for (TerrainRiverNetwork.Lake lake : network.lakes()) {
+            TerrainRiverNetwork.Lake cropped = cropLake(lake, minX, minZ, maxX, maxZ);
+            if (cropped != null) {
+                builder.addLake(cropped);
+            }
+        }
+
         return builder.build();
+    }
+
+    private static List<TerrainRiverNetwork.Lake> buildLakes(TerrainRiverTile river) {
+        boolean[] visited = new boolean[river.width() * river.height()];
+        List<TerrainRiverNetwork.Lake> lakes = new ArrayList<>();
+
+        for (int z = 0; z < river.height(); z++) {
+            for (int x = 0; x < river.width(); x++) {
+                int start = river.index(x, z);
+                if (!river.isLakeAt(x, z) || visited[start]) {
+                    continue;
+                }
+
+                LakeComponent component = traceLakeComponent(river, x, z, visited);
+                if (component.cells().isEmpty()) {
+                    continue;
+                }
+
+                lakes.add(toLake(river, lakes.size(), component));
+            }
+        }
+
+        return List.copyOf(lakes);
+    }
+
+    private static LakeComponent traceLakeComponent(TerrainRiverTile river, int startX, int startZ, boolean[] visited) {
+        Queue<Integer> queue = new ArrayDeque<>();
+        List<Integer> cells = new ArrayList<>();
+        int start = river.index(startX, startZ);
+        queue.add(start);
+        visited[start] = true;
+
+        while (!queue.isEmpty()) {
+            int cell = queue.remove();
+            cells.add(cell);
+            int x = cell % river.width();
+            int z = cell / river.width();
+
+            for (int dir = 0; dir < 8; dir++) {
+                int nx = x + DIR_X[dir];
+                int nz = z + DIR_Z[dir];
+                if (nx < 0 || nz < 0 || nx >= river.width() || nz >= river.height()) {
+                    continue;
+                }
+                int next = river.index(nx, nz);
+                if (visited[next] || !river.isLakeAt(nx, nz)) {
+                    continue;
+                }
+                visited[next] = true;
+                queue.add(next);
+            }
+        }
+
+        return new LakeComponent(cells);
+    }
+
+    private static TerrainRiverNetwork.Lake toLake(TerrainRiverTile river, int lakeId, LakeComponent component) {
+        Map<Integer, List<Integer>> cellsByRow = new HashMap<>();
+        double sumX = 0.0D;
+        double sumZ = 0.0D;
+        float sumDepth = 0.0F;
+        float maxDepth = 0.0F;
+        float maxAccumulation = 0.0F;
+        int outletCell = -1;
+        float outletScore = -1.0F;
+        int inflowCount = 0;
+
+        Set<Integer> lakeCells = new HashSet<>(component.cells());
+        for (int cell : component.cells()) {
+            int x = cell % river.width();
+            int z = cell / river.width();
+            cellsByRow.computeIfAbsent(z, ignored -> new ArrayList<>()).add(x);
+
+            double worldX = river.blockStartX() + x + 0.5D;
+            double worldZ = river.blockStartZ() + z + 0.5D;
+            sumX += worldX;
+            sumZ += worldZ;
+
+            float depth = Math.max(0.0F, river.waterLevelYAt(x, z) - river.surfaceYAtLocal(x, z));
+            sumDepth += depth;
+            maxDepth = Math.max(maxDepth, depth);
+            maxAccumulation = Math.max(maxAccumulation, river.accumulationAt(x, z));
+
+            byte direction = river.directionAt(x, z);
+            if (direction >= 0) {
+                int nx = x + DIR_X[direction];
+                int nz = z + DIR_Z[direction];
+                if (nx >= 0 && nz >= 0 && nx < river.width() && nz < river.height()) {
+                    int next = river.index(nx, nz);
+                    if (!lakeCells.contains(next)) {
+                        float score = river.accumulationAt(x, z);
+                        if (score > outletScore) {
+                            outletScore = score;
+                            outletCell = cell;
+                        }
+                    }
+                }
+            }
+
+            for (int dir = 0; dir < 8; dir++) {
+                int nx = x + DIR_X[dir];
+                int nz = z + DIR_Z[dir];
+                if (nx < 0 || nz < 0 || nx >= river.width() || nz >= river.height()) {
+                    continue;
+                }
+                int neighbor = river.index(nx, nz);
+                if (lakeCells.contains(neighbor) || !river.isRiverAt(nx, nz)) {
+                    continue;
+                }
+                byte neighborDirection = river.directionAt(nx, nz);
+                if (neighborDirection >= 0
+                        && nx + DIR_X[neighborDirection] == x
+                        && nz + DIR_Z[neighborDirection] == z) {
+                    inflowCount++;
+                }
+            }
+        }
+
+        List<TerrainRiverNetwork.LakeRun> runs = new ArrayList<>();
+        for (Map.Entry<Integer, List<Integer>> entry : cellsByRow.entrySet()) {
+            int rowZ = entry.getKey();
+            List<Integer> rowXs = entry.getValue();
+            rowXs.sort(Integer::compareTo);
+
+            int runStart = rowXs.get(0);
+            int previous = runStart;
+            float runDepthSum = 0.0F;
+            float runMaxAccumulation = 0.0F;
+            float runWaterLevelSum = 0.0F;
+            int runCount = 0;
+
+            for (int i = 0; i <= rowXs.size(); i++) {
+                boolean flush = i == rowXs.size();
+                int x = flush ? Integer.MIN_VALUE : rowXs.get(i);
+                if (!flush && (i == 0 || x == previous + 1)) {
+                    int idx = river.index(x, rowZ);
+                    runDepthSum += Math.max(0.0F, river.waterLevelYAt(x, rowZ) - river.surfaceYAtLocal(x, rowZ));
+                    runWaterLevelSum += river.waterLevelYAt(x, rowZ);
+                    runMaxAccumulation = Math.max(runMaxAccumulation, river.accumulationAt(x, rowZ));
+                    runCount++;
+                    previous = x;
+                    continue;
+                }
+
+                if (runCount > 0) {
+                    runs.add(new TerrainRiverNetwork.LakeRun(
+                            river.blockStartX() + runStart,
+                            river.blockStartX() + previous + 1,
+                            river.blockStartZ() + rowZ,
+                            runWaterLevelSum / runCount,
+                            runDepthSum / runCount,
+                            runMaxAccumulation
+                    ));
+                }
+
+                if (!flush) {
+                    runStart = x;
+                    previous = x;
+                    int idx = river.index(x, rowZ);
+                    runDepthSum = Math.max(0.0F, river.waterLevelYAt(x, rowZ) - river.surfaceYAtLocal(x, rowZ));
+                    runWaterLevelSum = river.waterLevelYAt(x, rowZ);
+                    runMaxAccumulation = river.accumulationAt(x, rowZ);
+                    runCount = 1;
+                }
+            }
+        }
+
+        int outletWorldX = Integer.MIN_VALUE;
+        int outletWorldZ = Integer.MIN_VALUE;
+        if (outletCell >= 0) {
+            outletWorldX = river.blockStartX() + outletCell % river.width();
+            outletWorldZ = river.blockStartZ() + outletCell / river.width();
+        }
+
+        int cellCount = component.cells().size();
+        return new TerrainRiverNetwork.Lake(
+                lakeId,
+                List.copyOf(runs),
+                sumX / Math.max(1, cellCount),
+                sumZ / Math.max(1, cellCount),
+                averageWaterLevel(runs),
+                sumDepth / Math.max(1, cellCount),
+                maxDepth,
+                maxAccumulation,
+                cellCount,
+                inflowCount,
+                outletWorldX,
+                outletWorldZ
+        );
+    }
+
+    private static float averageWaterLevel(List<TerrainRiverNetwork.LakeRun> runs) {
+        if (runs.isEmpty()) {
+            return 0.0F;
+        }
+        float sum = 0.0F;
+        int count = 0;
+        for (TerrainRiverNetwork.LakeRun run : runs) {
+            int width = Math.max(1, run.endWorldX() - run.startWorldX());
+            sum += run.waterLevelY() * width;
+            count += width;
+        }
+        return sum / Math.max(1, count);
+    }
+
+    private static TerrainRiverNetwork.Lake cropLake(
+            TerrainRiverNetwork.Lake lake,
+            double minX,
+            double minZ,
+            double maxX,
+            double maxZ
+    ) {
+        List<TerrainRiverNetwork.LakeRun> runs = new ArrayList<>();
+        double sumX = 0.0D;
+        double sumZ = 0.0D;
+        float sumDepth = 0.0F;
+        float maxDepth = 0.0F;
+        float maxAccumulation = 0.0F;
+        int cellCount = 0;
+
+        int minBlockX = (int) Math.floor(minX);
+        int minBlockZ = (int) Math.floor(minZ);
+        int maxBlockX = (int) Math.ceil(maxX);
+        int maxBlockZ = (int) Math.ceil(maxZ);
+
+        for (TerrainRiverNetwork.LakeRun run : lake.runs()) {
+            if (run.worldZ() < minBlockZ || run.worldZ() >= maxBlockZ) {
+                continue;
+            }
+            int start = Math.max(run.startWorldX(), minBlockX);
+            int end = Math.min(run.endWorldX(), maxBlockX);
+            if (end <= start) {
+                continue;
+            }
+
+            TerrainRiverNetwork.LakeRun cropped = new TerrainRiverNetwork.LakeRun(
+                    start,
+                    end,
+                    run.worldZ(),
+                    run.waterLevelY(),
+                    run.meanDepthBlocks(),
+                    run.maxAccumulation()
+            );
+            runs.add(cropped);
+
+            int width = end - start;
+            cellCount += width;
+            sumX += (start + end) * 0.5D * width;
+            sumZ += (run.worldZ() + 0.5D) * width;
+            sumDepth += run.meanDepthBlocks() * width;
+            maxDepth = Math.max(maxDepth, run.meanDepthBlocks());
+            maxAccumulation = Math.max(maxAccumulation, run.maxAccumulation());
+        }
+
+        if (runs.isEmpty()) {
+            return null;
+        }
+
+        int outletX = lake.outletWorldX();
+        int outletZ = lake.outletWorldZ();
+        if (outletX < minBlockX || outletX >= maxBlockX || outletZ < minBlockZ || outletZ >= maxBlockZ) {
+            outletX = Integer.MIN_VALUE;
+            outletZ = Integer.MIN_VALUE;
+        }
+
+        return new TerrainRiverNetwork.Lake(
+                lake.id(),
+                List.copyOf(runs),
+                sumX / Math.max(1, cellCount),
+                sumZ / Math.max(1, cellCount),
+                averageWaterLevel(runs),
+                sumDepth / Math.max(1, cellCount),
+                Math.max(maxDepth, lake.maxDepthBlocks()),
+                Math.max(maxAccumulation, lake.maxAccumulation()),
+                cellCount,
+                lake.inflowCount(),
+                outletX,
+                outletZ
+        );
     }
 
     private static CroppedEndpointInfo croppedEndpointInfo(
@@ -166,6 +455,7 @@ public final class TerrainRiverVectorBuilder {
         private final Map<Integer, Integer> nodeIdsByCell = new HashMap<>();
         private final List<TerrainRiverNetwork.Node> nodes = new ArrayList<>();
         private final List<TerrainRiverNetwork.Segment> segments = new ArrayList<>();
+        private final List<TerrainRiverNetwork.Lake> lakes = new ArrayList<>();
 
         private VectorBuildContext(TerrainRiverTile river) {
             this.river = river;
@@ -462,6 +752,7 @@ public final class TerrainRiverVectorBuilder {
                 network.height(),
                 List.copyOf(nodes),
                 List.copyOf(segments),
+                network.lakes(),
                 network.maxAccumulation()
         );
     }
@@ -540,6 +831,9 @@ public final class TerrainRiverVectorBuilder {
         }
     }
 
+    private record LakeComponent(List<Integer> cells) {
+    }
+
     private record CroppedEndpointInfo(TerrainRiverNetwork.NodeType type, int directAffluentCount) {
     }
 
@@ -552,6 +846,7 @@ public final class TerrainRiverVectorBuilder {
         private final Map<CroppedNodeKey, Integer> nodeIdsByKey = new HashMap<>();
         private final List<TerrainRiverNetwork.Node> nodes = new ArrayList<>();
         private final List<TerrainRiverNetwork.Segment> segments = new ArrayList<>();
+        private final List<TerrainRiverNetwork.Lake> lakes = new ArrayList<>();
 
         private CroppedNetworkBuilder(TerrainRiverNetwork source, int blockStartX, int blockStartZ, int width, int height) {
             this.source = source;
@@ -604,6 +899,10 @@ public final class TerrainRiverVectorBuilder {
             ));
         }
 
+        private void addLake(TerrainRiverNetwork.Lake lake) {
+            lakes.add(lake);
+        }
+
         private TerrainRiverNetwork build() {
             return new TerrainRiverNetwork(
                     blockStartX,
@@ -612,6 +911,7 @@ public final class TerrainRiverVectorBuilder {
                     height,
                     List.copyOf(nodes),
                     List.copyOf(segments),
+                    List.copyOf(lakes),
                     source.maxAccumulation()
             );
         }

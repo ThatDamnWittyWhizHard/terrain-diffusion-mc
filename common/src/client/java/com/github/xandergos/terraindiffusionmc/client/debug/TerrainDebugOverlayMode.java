@@ -2,7 +2,7 @@ package com.github.xandergos.terraindiffusionmc.client.debug;
 
 public enum TerrainDebugOverlayMode {
     OFF("Off"),
-    RIVER_TRACE_WIDTH("River trace width + affluents");
+    RIVER_TRACE_WIDTH("River trace width + lake accumulation");
 
     private final String label;
 

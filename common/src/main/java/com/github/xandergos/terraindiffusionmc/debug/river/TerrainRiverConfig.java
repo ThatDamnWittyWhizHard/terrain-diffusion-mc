@@ -18,6 +18,8 @@ public final class TerrainRiverConfig {
 
     /** Depression/lake handling. */
     public static final float MIN_LAKE_DEPTH_BLOCKS = 1.25F;
+    public static final int MIN_LAKE_SURFACE_CELLS = 14;
+    public static final int MIN_LAKE_COMPONENT_WIDTH_BLOCKS = 4;
     public static final float MIN_POND_DISCHARGE = 24.0F;
     public static final float LAKE_BALANCE_EVAPORATION_WEIGHT = 0.42F;
 
