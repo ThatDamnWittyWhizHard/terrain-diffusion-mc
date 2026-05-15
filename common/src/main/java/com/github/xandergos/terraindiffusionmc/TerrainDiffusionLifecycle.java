@@ -8,6 +8,7 @@ import com.github.xandergos.terraindiffusionmc.pipeline.PipelineModels;
 import com.github.xandergos.terraindiffusionmc.world.TerrainDiffusionBiomeSource;
 import com.github.xandergos.terraindiffusionmc.world.TerrainDiffusionDensityFunction;
 import com.github.xandergos.terraindiffusionmc.world.WorldScaleManager;
+import com.github.xandergos.terraindiffusionmc.world.hydrology.TerrainHydrologyWorldgen;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
@@ -85,6 +86,7 @@ public final class TerrainDiffusionLifecycle {
      */
     public static void onServerStarting() {
         LocalTerrainProvider.clearCache();
+        TerrainHydrologyWorldgen.clearCache();
     }
 
     /**
@@ -94,6 +96,7 @@ public final class TerrainDiffusionLifecycle {
         if (world.dimension() == Level.OVERWORLD) {
             WorldScaleManager.initializeForWorld(world);
             LocalTerrainProvider.init(world.getSeed());
+            TerrainHydrologyWorldgen.clearCache();
         }
     }
 
@@ -102,6 +105,7 @@ public final class TerrainDiffusionLifecycle {
      */
     public static void onServerStopping() {
         ExplorerServer.stop();
+        TerrainHydrologyWorldgen.clearCache();
     }
 
     /**

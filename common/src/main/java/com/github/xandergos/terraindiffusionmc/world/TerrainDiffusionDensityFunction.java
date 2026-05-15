@@ -3,6 +3,7 @@ package com.github.xandergos.terraindiffusionmc.world;
 import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import com.github.xandergos.terraindiffusionmc.pipeline.LocalTerrainProvider;
 import com.github.xandergos.terraindiffusionmc.pipeline.LocalTerrainProvider.HeightmapData;
+import com.github.xandergos.terraindiffusionmc.world.hydrology.TerrainHydrologyWorldgen;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.util.KeyDispatchDataCodec;
 import net.minecraft.world.level.levelgen.DensityFunction;
@@ -38,6 +39,7 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
         int localX = Math.max(0, Math.min(data.width  - 1, x - blockStartX));
         int localZ = Math.max(0, Math.min(data.height - 1, z - blockStartZ));
 
+        TerrainHydrologyWorldgen.markTerrainDiffusionColumn(x, z);
         int targetHeight = HeightConverter.convertToMinecraftHeight(data.heightmap[localZ][localX]);
         return targetHeight - y;
     }
@@ -95,6 +97,7 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
             int localX = Math.max(0, Math.min(data.width  - 1, x - ctx.blockStartX));
             int localZ = Math.max(0, Math.min(data.height - 1, z - ctx.blockStartZ));
 
+            TerrainHydrologyWorldgen.markTerrainDiffusionColumn(x, z);
             int targetHeight = HeightConverter
                 .convertToMinecraftHeight(data.heightmap[localZ][localX]);
             densities[i] = targetHeight - y;
