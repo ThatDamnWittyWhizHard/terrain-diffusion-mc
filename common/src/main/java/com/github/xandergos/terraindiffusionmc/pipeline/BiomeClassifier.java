@@ -136,6 +136,11 @@ public final class BiomeClassifier {
                 boolean treesDense     = !treesNone && effTreeMoisture >= 0.8f && effTreeMoisture < 1.3f;
                 boolean treesRainforest = !treesNone && effTreeMoisture >= 1.3f;
 
+                // Keep the pre-slope vegetation state so jagged_peaks are only injected in true
+                // high-cold ice_spikes desert zones, not in every steep cold cliff where trees were
+                // stripped by the slope override below.
+                boolean naturalTreesNone = treesNone;
+
                 // Slope overrides. Do not change: this feeds the existing stony_peak distribution.
                 boolean slopeMedium = slope >= 0.62f && slope < bareThreshold;
                 boolean slopeBare   = slope >= bareThreshold;
@@ -180,9 +185,11 @@ public final class BiomeClassifier {
                 boolean stableTemp = tSeason < 900f;
 
                 // Cold elevated dry/barren areas used to become broad empty grove bands.
-                // Keep snowy_slope selection untouched: this flag is only consumed when !hasSnow.
-                boolean coldElevated = altM > 1200f && temp < 5f;
-                boolean coldElevatedGroveDesert = coldElevated && treesNone && !hasSnow && (barren || dry);
+                // Keep snowy_slope selection untouched: these flags are only consumed when !hasSnow.
+                boolean coldElevated = altM > 1050f && temp < 6f;
+                boolean coldElevatedIceSpikesDesert = coldElevated && !hasSnow && naturalTreesNone
+                        && (barren || dry || (altM > 1550f && semiDry && temp < 3f));
+                boolean coldElevatedGroveDesert = coldElevatedIceSpikesDesert && treesNone;
 
                 short biome = PLAINS;
 
@@ -195,7 +202,7 @@ public final class BiomeClassifier {
                 } else if (mountains) {
                     if (slopeBare) {
                         if (coldElevated) {
-                            biome = chooseColdElevatedPeak(altM, temp, slope, snowNoise[idx], coldElevatedGroveDesert);
+                            biome = chooseColdElevatedPeak(altM, temp, slope, snowNoise[idx], tempNoise[idx], coldElevatedIceSpikesDesert);
                         } else {
                             biome = hasSnow ? FROZEN_PEAKS : STONY_PEAKS;
                         }
@@ -299,11 +306,11 @@ public final class BiomeClassifier {
                 }
 
                 // Bare slope override for lowland/non-mountain cliffs.
-                // Cold elevated cliffs now blend stony/frozen peaks, and dry alpine grove-desert cliffs
-                // also get jagged peaks mixed into the rocky part.
+                // Cold elevated cliffs blend stony/frozen peaks; jagged peaks are only mixed in
+                // when the surrounding high-cold dry zone would classify as an ice_spikes desert.
                 if (slopeBare && !isOcean && !mountains) {
                     if (coldElevated) {
-                        biome = chooseColdElevatedPeak(altM, temp, slope, snowNoise[idx], coldElevatedGroveDesert);
+                        biome = chooseColdElevatedPeak(altM, temp, slope, snowNoise[idx], tempNoise[idx], coldElevatedIceSpikesDesert);
                     } else {
                         biome = hasSnow ? FROZEN_PEAKS : STONY_PEAKS;
                     }
@@ -315,12 +322,14 @@ public final class BiomeClassifier {
         return out;
     }
 
-    private static short chooseColdElevatedPeak(float altM, float temp, float slope, float snowNoiseValue,
+    private static short chooseColdElevatedPeak(float altM, float temp, float slope,
+                                                 float snowNoiseValue, float rockNoiseValue,
                                                  boolean mixJaggedIntoRock) {
         // Frozen peaks become more common with altitude, without moving the snowy_slope branch.
         float altitudeFactor = clamp01((altM - 1800f) / 2200f);
         float coldFactor = clamp01((4f - temp) / 12f);
-        float frozenShare = clamp01(0.10f + 0.70f * altitudeFactor + 0.25f * coldFactor);
+        float frozenShare = clamp01(0.08f + 0.55f * altitudeFactor + 0.20f * coldFactor);
+        frozenShare = Math.min(0.82f, frozenShare);
 
         // SNOW_NOISE is already sampled for this pixel; reuse it so the blend is spatial, not random per tick.
         float pattern = clamp01(0.5f + snowNoiseValue / 10f);
@@ -330,9 +339,8 @@ public final class BiomeClassifier {
 
         if (mixJaggedIntoRock) {
             float steepFactor = clamp01((slope - 0.78f) / 0.70f);
-            float jaggedShare = clamp01(0.12f + 0.10f * altitudeFactor + 0.15f * steepFactor);
-            float remainingRockShare = Math.max(0.001f, 1f - frozenShare);
-            float rockPattern = clamp01((pattern - frozenShare) / remainingRockShare);
+            float jaggedShare = clamp01(0.08f + 0.06f * altitudeFactor + 0.08f * steepFactor);
+            float rockPattern = clamp01(0.42f - rockNoiseValue / 1.4f - 0.10f * altitudeFactor - 0.05f * steepFactor);
             if (rockPattern < jaggedShare) {
                 return JAGGED_PEAKS;
             }
