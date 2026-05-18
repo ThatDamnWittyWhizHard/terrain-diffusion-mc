@@ -7,6 +7,7 @@ import com.github.xandergos.terraindiffusionmc.pipeline.ModelAssetManager;
 import com.github.xandergos.terraindiffusionmc.pipeline.PipelineModels;
 import com.github.xandergos.terraindiffusionmc.world.TerrainDiffusionBiomeSource;
 import com.github.xandergos.terraindiffusionmc.world.TerrainDiffusionDensityFunction;
+import com.github.xandergos.terraindiffusionmc.world.TerrainDiffusionFinalDensityFunction;
 import com.github.xandergos.terraindiffusionmc.world.WorldScaleManager;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
@@ -20,6 +21,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.levelgen.DensityFunction;
+import net.minecraft.world.phys.Vec3;
 import com.mojang.serialization.MapCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +36,7 @@ public final class TerrainDiffusionLifecycle {
     public static final String MOD_ID = "terrain-diffusion-mc";
     private static final Logger LOG = LoggerFactory.getLogger(TerrainDiffusionLifecycle.class);
     public static final Identifier TERRAIN_DIFFUSION_ID = Identifier.fromNamespaceAndPath(MOD_ID, "terrain_diffusion");
+    public static final Identifier TERRAIN_DIFFUSION_FINAL_DENSITY_ID = Identifier.fromNamespaceAndPath(MOD_ID, "terrain_diffusion_final_density");
     private static boolean initialized;
 
     private TerrainDiffusionLifecycle() {
@@ -73,6 +76,7 @@ public final class TerrainDiffusionLifecycle {
      */
     public static void registerDensityFunctionCodecs(CodecRegistrar<MapCodec<? extends DensityFunction>> registrar) {
         registrar.register(TERRAIN_DIFFUSION_ID, TerrainDiffusionDensityFunction.CODEC);
+        registrar.register(TERRAIN_DIFFUSION_FINAL_DENSITY_ID, TerrainDiffusionFinalDensityFunction.CODEC);
     }
 
     @FunctionalInterface
@@ -113,6 +117,8 @@ public final class TerrainDiffusionLifecycle {
 
     private static int executeExplore(CommandContext<CommandSourceStack> ctx) {
         try {
+            Vec3 pos = ctx.getSource().getPosition();
+            ExplorerServer.setExploreOrigin(pos.x, pos.z);
             int port = ExplorerServer.startIfNotRunning();
             String url = "http://localhost:" + port;
             MutableComponent link = Component.literal(url)

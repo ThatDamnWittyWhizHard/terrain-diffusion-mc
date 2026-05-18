@@ -11,11 +11,11 @@ import static com.github.xandergos.terraindiffusionmc.biome.BiomePalette.*;
  */
 public final class BiomeClassifier {
 
-    // Fixed-seed perturbations kept from the original classifier to avoid changing the broad
-    // existing biome boundaries and especially the stony/frozen peak split.
+    // Fixed-seed perturbations kept deterministic so biome IDs are stable for a given world seed.
     private static final FastNoiseLite TEMP_NOISE, TEMP_NOISE_FINE;
     private static final FastNoiseLite PRECIP_NOISE;
     private static final FastNoiseLite SNOW_NOISE, SNOW_NOISE_FINE;
+    private static final FastNoiseLite MICRO_BIOME_NOISE, MICRO_BIOME_FINE_NOISE, VEGETATION_PATCH_NOISE, VEGETATION_PATCH_FINE_NOISE;
 
     static {
         TEMP_NOISE = makeFnl(12345, 1f/500f, 3, 2f, 0.5f);
@@ -23,6 +23,10 @@ public final class BiomeClassifier {
         PRECIP_NOISE = makeFnl(12345, 1f/500f, 5, 2f, 0.5f);
         SNOW_NOISE = makeFnl(12345, 1f/500f, 3, 2f, 0.5f);
         SNOW_NOISE_FINE = makeFnl(54321, 1f/128f, 2, 2f, 0.5f);
+        MICRO_BIOME_NOISE = makeFnl(71191, 1f/38f, 2, 2f, 0.52f);
+        MICRO_BIOME_FINE_NOISE = makeFnl(11939, 1f/15f, 2, 2.1f, 0.50f);
+        VEGETATION_PATCH_NOISE = makeFnl(37211, 1f/44f, 3, 2f, 0.55f);
+        VEGETATION_PATCH_FINE_NOISE = makeFnl(48109, 1f/18f, 2, 2.05f, 0.52f);
     }
 
     private static FastNoiseLite makeFnl(int seed, float freq, int oct, float lac, float gain) {
@@ -80,8 +84,10 @@ public final class BiomeClassifier {
             }
         }
 
-        // Compute slope from padded elevation using Sobel (divide by pixelSizeM for ratio)
-        float[] slopeRatio = computeSlopeRatio(elevPadded, H, W, pixelSizeM);
+        // Compute slope and aspect from padded elevation using Sobel.
+        TerrainDerivatives terrainDerivatives = computeTerrainDerivatives(elevPadded, H, W, pixelSizeM);
+        float[] slopeRatio = terrainDerivatives.slopeRatio();
+        float[] northness = terrainDerivatives.northness();
 
         // Process per-pixel
         for (int r = 0; r < H; r++) {
@@ -90,6 +96,13 @@ public final class BiomeClassifier {
                 float elevVal   = elev[idx];
                 float altM      = Math.max(0f, elevVal);
                 float slope     = slopeRatio[idx];
+                float faceNorth = northness[idx];
+                float microCoarse = MICRO_BIOME_NOISE.GetNoise(j0 + c, i0 + r);
+                float microFine = MICRO_BIOME_FINE_NOISE.GetNoise(j0 + c, i0 + r);
+                float vegetationCoarse = VEGETATION_PATCH_NOISE.GetNoise(j0 + c, i0 + r);
+                float vegetationFine = VEGETATION_PATCH_FINE_NOISE.GetNoise(j0 + c, i0 + r);
+                float microBiome = clamp01(0.5f + 0.38f * microCoarse + 0.28f * microFine);
+                float vegetationPatch = clamp01(0.5f + 0.36f * vegetationCoarse + 0.30f * vegetationFine);
 
                 // Climate channels: [0]=temp, [1]=t_season, [2]=precip, [3]=p_cv
                 float tempRaw  = climate[idx];
@@ -153,10 +166,16 @@ public final class BiomeClassifier {
                     treesDense = false; treesRainforest = false;
                 }
 
-                // Snow classification. Do not change: this also feeds the existing stony/frozen peak split.
-                float snowTemp = temp + snowNoise[idx];
-                boolean isSteep = slope > 0.78f;
-                boolean hasSnow = snowTemp < 0f && precip > 150f && !isSteep;
+                // Aspect-aware snow line. In marginal cold bands, north-facing slopes keep snow
+                // longer while south-facing slopes lose it earlier. Very cold zones stay snowy.
+                float snowTransition = clamp01((temp + 8f) / 8f) * clamp01((5f - temp) / 7f);
+                float aspectSnowBias = 3.5f * faceNorth * snowTransition;
+                float snowTemp = temp + snowNoise[idx] - aspectSnowBias;
+                float snowSteepLimit = 0.78f
+                        + 0.20f * Math.max(0f, faceNorth) * snowTransition
+                        - 0.10f * Math.max(0f, -faceNorth) * snowTransition;
+                boolean isSteep = slope > snowSteepLimit;
+                boolean hasSnow = snowTemp < 0f && precip > 220f && treeMoisture > 0.16f && !isSteep;
 
                 // Elevation/temp bands
                 boolean isOcean   = elevVal < 0f;
@@ -184,12 +203,12 @@ public final class BiomeClassifier {
                 boolean highlySeasonalTemp = tSeason > 1800f;
                 boolean stableTemp = tSeason < 900f;
 
-                // Cold elevated dry/barren areas used to become broad empty grove bands.
+                // Cold elevated dry/barren areas become rocky or icy transition bands, not broad grove fallbacks.
                 // Keep snowy_slope selection untouched: these flags are only consumed when !hasSnow.
                 boolean coldElevated = altM > 1050f && temp < 6f;
                 boolean coldElevatedIceSpikesDesert = coldElevated && !hasSnow && naturalTreesNone
                         && (barren || dry || (altM > 1550f && semiDry && temp < 3f));
-                boolean coldElevatedGroveDesert = coldElevatedIceSpikesDesert && treesNone;
+                boolean coldElevatedIceSpikesCandidate = coldElevatedIceSpikesDesert && treesNone;
 
                 short biome = PLAINS;
 
@@ -208,16 +227,16 @@ public final class BiomeClassifier {
                         }
                     } else if (hasSnow) {
                         if (treesNone) biome = SNOWY_SLOPES;
-                        else if (treesSparse || treesForest) biome = SNOWY_TAIGA_SPARSE;
+                        else if (treesSparse || treesForest) biome = chooseSparseSnowyTaiga(
+                                effTreeMoisture, vegetationPatch, highland, slopeMedium);
                         else biome = SNOWY_TAIGA;
                     } else if (treesNone) {
-                        if (coldElevatedGroveDesert) biome = ICE_SPIKES;
-                        else if (barren) biome = WINDSWEPT_HILLS;
-                        else if (dry) biome = GROVE;
+                        if (coldElevatedIceSpikesCandidate) biome = ICE_SPIKES;
+                        else if (coldElevated || barren || dry || cold || frozen) biome = SNOWY_PLAINS;
                         else biome = MEADOW;
                     } else if (treesSparse || treesForest) {
                         if (cool && moist && stablePrecip) biome = CHERRY_GROVE;
-                        else biome = TAIGA_SPARSE;
+                        else biome = chooseSparseTaiga(effTreeMoisture, vegetationPatch, highland, moist, slopeMedium);
                     } else {
                         biome = moist ? OLD_GROWTH_SPRUCE_TAIGA : TAIGA;
                     }
@@ -229,9 +248,11 @@ public final class BiomeClassifier {
                         else biome = SNOWY_PLAINS;
                     } else if (hasSnow) {
                         if (treesDense && moist) biome = SNOWY_TAIGA;
-                        else biome = (treesSparse || treesForest) ? SNOWY_TAIGA_SPARSE : SNOWY_TAIGA;
+                        else biome = (treesSparse || treesForest)
+                                ? chooseSparseSnowyTaiga(effTreeMoisture, vegetationPatch, highland, slopeMedium)
+                                : SNOWY_TAIGA;
                     } else if (treesNone) {
-                        if (coldElevatedGroveDesert) {
+                        if (coldElevatedIceSpikesCandidate) {
                             biome = ICE_SPIKES;
                         } else if ((warm || hot) && veryDry) {
                             if (hot && upland && precip > 90f && precip < 320f && treeMoisture > 0.04f) biome = BADLANDS;
@@ -240,13 +261,13 @@ public final class BiomeClassifier {
                             if (slopeMedium && highland) biome = ERODED_BADLANDS;
                             else biome = BADLANDS;
                         } else if (barren && !lowland && (cold || cool || temperate)) {
-                            biome = slopeMedium ? WINDSWEPT_GRAVELLY_HILLS : GROVE;
+                            biome = (cold || frozen || coldElevated || (highland && temp < 3f)) ? SNOWY_PLAINS : PLAINS;
                         } else if (dry) {
-                            biome = slopeMedium ? WINDSWEPT_HILLS : GROVE;
+                            biome = (cold || frozen || coldElevated || (highland && temp < 2f && precip > 220f)) ? SNOWY_PLAINS : PLAINS;
                         } else if (cool && moist && upland && stablePrecip) {
                             biome = MEADOW;
                         } else {
-                            biome = stablePrecip && temperate ? SUNFLOWER_PLAINS : PLAINS;
+                            biome = (cold || frozen) ? SNOWY_PLAINS : (stablePrecip && temperate ? SUNFLOWER_PLAINS : PLAINS);
                         }
                     } else if (treesSparse || treesForest) {
                         if (hot) {
@@ -256,19 +277,21 @@ public final class BiomeClassifier {
                             if (semiDry && highland && !slopeMedium && !seasonalPrecip) biome = WOODED_BADLANDS;
                             else if (semiDry && seasonalPrecip) biome = slopeMedium ? WINDSWEPT_SAVANNA : (highland ? SAVANNA_PLATEAU : SAVANNA);
                             else if (veryMoist && lowland) biome = MANGROVE_SWAMP;
-                            else if (treesForest && !slopeMedium) biome = FOREST_SPARSE;
+                            else if (treesForest && !slopeMedium) biome = chooseSparseForest(
+                                    effTreeMoisture, vegetationPatch, upland, moist, PLAINS);
                             else biome = SAVANNA;
                         } else if (temperate) {
                             if (slopeMedium) biome = WINDSWEPT_FOREST;
                             else if (moist && stablePrecip && upland) biome = OLD_GROWTH_BIRCH_FOREST;
                             else if (moist && stablePrecip) biome = FLOWER_FOREST;
                             else if (stableTemp && !veryMoist) biome = BIRCH_FOREST;
-                            else biome = FOREST_SPARSE;
+                            else biome = chooseSparseForest(effTreeMoisture, vegetationPatch, upland, moist,
+                                    stablePrecip && temperate ? SUNFLOWER_PLAINS : PLAINS);
                         } else if (cool) {
                             if (moist && stablePrecip && upland) biome = CHERRY_GROVE;
-                            else biome = TAIGA_SPARSE;
+                            else biome = chooseSparseTaiga(effTreeMoisture, vegetationPatch, upland, moist, slopeMedium);
                         } else {
-                            biome = TAIGA_SPARSE;
+                            biome = chooseSparseTaiga(effTreeMoisture, vegetationPatch, upland, moist, slopeMedium);
                         }
                     } else if (treesDense) {
                         if (hot) {
@@ -316,10 +339,165 @@ public final class BiomeClassifier {
                     }
                 }
 
+                biome = applyMicroBiomeTransitions(biome, temp, treeMoisture, effTreeMoisture,
+                        hasSnow, isOcean, slopeBare, upland, highland, moist, microBiome, vegetationPatch);
+                biome = normalizeColdOpenBiome(biome, temp, hasSnow, isOcean);
+
                 out[idx] = biome;
             }
         }
         return out;
+    }
+
+    private static short chooseSparseForest(float effTreeMoisture, float patchNoise,
+                                            boolean upland, boolean moist, short openBiome) {
+        float treeShare = clamp01(0.18f + 0.72f * clamp01((effTreeMoisture - 0.18f) / 0.70f));
+        if (patchNoise < treeShare) {
+            return moist && upland ? BIRCH_FOREST : FOREST;
+        }
+        return moist && upland ? MEADOW : openBiome;
+    }
+
+    private static short chooseSparseTaiga(float effTreeMoisture, float patchNoise,
+                                           boolean upland, boolean moist, boolean slopeMedium) {
+        float treeShare = clamp01(0.16f + 0.70f * clamp01((effTreeMoisture - 0.18f) / 0.72f));
+        if (patchNoise < treeShare) {
+            return moist ? OLD_GROWTH_PINE_TAIGA : TAIGA;
+        }
+        if (slopeMedium) return WINDSWEPT_FOREST;
+        return upland && moist ? MEADOW : PLAINS;
+    }
+
+    private static short chooseSparseSnowyTaiga(float effTreeMoisture, float patchNoise,
+                                                boolean highland, boolean slopeMedium) {
+        float treeShare = clamp01(0.14f + 0.68f * clamp01((effTreeMoisture - 0.16f) / 0.70f));
+        if (patchNoise < treeShare) {
+            return SNOWY_TAIGA;
+        }
+        if (highland || slopeMedium) return SNOWY_SLOPES;
+        return SNOWY_PLAINS;
+    }
+
+    private static short applyMicroBiomeTransitions(short biome, float temp, float treeMoisture,
+                                                    float effTreeMoisture, boolean hasSnow,
+                                                    boolean isOcean, boolean slopeBare,
+                                                    boolean upland, boolean highland,
+                                                    boolean moist, float microNoise,
+                                                    float patchNoise) {
+        if (isOcean || slopeBare) return biome;
+
+        float forestEdge = Math.max(edgeFactor(effTreeMoisture, 0.50f, 0.17f),
+                edgeFactor(treeMoisture, 0.55f, 0.14f));
+        float coldEdge = Math.max(edgeFactor(temp, -5f, 3.6f), edgeFactor(temp, 5f, 3.6f));
+        float warmEdge = Math.max(edgeFactor(temp, 12f, 3.8f), edgeFactor(temp, 20f, 3.8f));
+        float aridEdge = Math.max(edgeFactor(treeMoisture, 0.12f, 0.10f),
+                edgeFactor(treeMoisture, 0.35f, 0.18f));
+        float granular = clamp01(0.55f * patchNoise + 0.45f * microNoise);
+
+        // Dry/green borders get small plains/savanna/desert/badlands flecks. Do not let this path
+        // create cold/snow biomes; that was the source of snow islands beside deserts and badlands.
+        if (aridEdge > 0f && temp > 16f) {
+            float aridPatchShare = 0.22f + 0.34f * aridEdge;
+            switch (biome) {
+                case PLAINS:
+                case SUNFLOWER_PLAINS:
+                    if (treeMoisture < 0.20f && temp > 25f && granular < aridPatchShare) return DESERT;
+                    if (treeMoisture < 0.42f && granular < aridPatchShare) return SAVANNA;
+                    break;
+                case SAVANNA:
+                case SAVANNA_PLATEAU:
+                    if (treeMoisture < 0.18f && temp > 25f && granular < 0.14f + 0.22f * aridEdge) return DESERT;
+                    if (granular > 0.82f - 0.24f * aridEdge) return PLAINS;
+                    break;
+                case DESERT:
+                    if (upland && treeMoisture > 0.07f && granular > 0.78f - 0.24f * aridEdge) return BADLANDS;
+                    if (treeMoisture > 0.18f && granular > 0.84f - 0.24f * aridEdge) return SAVANNA;
+                    break;
+                case BADLANDS:
+                case ERODED_BADLANDS:
+                    if (granular < 0.16f + 0.20f * aridEdge) return DESERT;
+                    if (treeMoisture > 0.20f && granular > 0.82f - 0.22f * aridEdge) return SAVANNA;
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        if (forestEdge > 0f && granular < 0.30f + 0.36f * forestEdge) {
+            switch (biome) {
+                case PLAINS:
+                case SUNFLOWER_PLAINS:
+                    if (hasSnow) return SNOWY_PLAINS;
+                    if (temp < 8f) return upland && moist ? MEADOW : PLAINS;
+                    if (temp < 20f) return moist && upland ? MEADOW : FOREST;
+                    return SAVANNA;
+                case MEADOW:
+                    if (temp < 8f) return (hasSnow || highland) ? SNOWY_PLAINS : MEADOW;
+                    return FOREST;
+                case GROVE:
+                    return (hasSnow || highland) ? SNOWY_PLAINS : MEADOW;
+                default:
+                    break;
+            }
+        }
+
+        if (forestEdge > 0f && granular > 0.72f - 0.34f * forestEdge) {
+            switch (biome) {
+                case FOREST:
+                case BIRCH_FOREST:
+                case FLOWER_FOREST:
+                    return moist && upland ? MEADOW : PLAINS;
+                case TAIGA:
+                case OLD_GROWTH_PINE_TAIGA:
+                    return highland && moist ? MEADOW : PLAINS;
+                case SNOWY_TAIGA:
+                    return highland ? SNOWY_SLOPES : SNOWY_PLAINS;
+                default:
+                    break;
+            }
+        }
+
+        if (coldEdge > 0f && microNoise < 0.22f + 0.24f * coldEdge) {
+            switch (biome) {
+                case TAIGA:
+                    return hasSnow ? SNOWY_TAIGA : (temp < 5f ? SNOWY_PLAINS : (highland ? SNOWY_PLAINS : PLAINS));
+                case GROVE:
+                    return (hasSnow || highland) ? SNOWY_PLAINS : MEADOW;
+                case PLAINS:
+                    return (hasSnow || temp < 5f) ? SNOWY_PLAINS : PLAINS;
+                case SNOWY_PLAINS:
+                    return (hasSnow || temp < 5f) ? SNOWY_PLAINS : PLAINS;
+                case SNOWY_TAIGA:
+                    return hasSnow ? SNOWY_TAIGA : TAIGA;
+                default:
+                    break;
+            }
+        }
+
+        if (warmEdge > 0f && microNoise > 0.78f - 0.22f * warmEdge) {
+            switch (biome) {
+                case FOREST: return BIRCH_FOREST;
+                case BIRCH_FOREST: return PLAINS;
+                case PLAINS: return temp > 18f ? SAVANNA : PLAINS;
+                case SAVANNA: return PLAINS;
+                default: break;
+            }
+        }
+
+        return biome;
+    }
+
+
+    private static short normalizeColdOpenBiome(short biome, float temp, boolean hasSnow, boolean isOcean) {
+        if (isOcean || temp >= 5f) return biome;
+        return switch (biome) {
+            case PLAINS, SUNFLOWER_PLAINS, MEADOW -> SNOWY_PLAINS;
+            default -> biome;
+        };
+    }
+
+    private static float edgeFactor(float value, float threshold, float halfWidth) {
+        return clamp01(1f - Math.abs(value - threshold) / halfWidth);
     }
 
     private static short chooseColdElevatedPeak(float altM, float temp, float slope,
@@ -355,9 +533,13 @@ public final class BiomeClassifier {
         return value;
     }
 
-    private static float[] computeSlopeRatio(float[] elevPadded, int H, int W, float pixelSizeM) {
-        // Sobel kernels / 8 applied to (H+2, W+2) padded array → (H, W) output
+    private record TerrainDerivatives(float[] slopeRatio, float[] northness) {}
+
+    private static TerrainDerivatives computeTerrainDerivatives(float[] elevPadded, int H, int W, float pixelSizeM) {
+        // Sobel kernels / 8 applied to (H+2, W+2) padded array → (H, W) output.
+        // northness is +1 on north-facing slopes, -1 on south-facing slopes, 0 on flat/east-west slopes.
         float[] slope = new float[H * W];
+        float[] northness = new float[H * W];
         int PW = W + 2;
         float[] sx = {-1,0,1, -2,0,2, -1,0,1};
         float[] sy = {-1,-2,-1, 0,0,0, 1,2,1};
@@ -371,9 +553,12 @@ public final class BiomeClassifier {
                         dy += v * sy[kr * 3 + kc];
                     }
                 dx /= 8f; dy /= 8f;
-                slope[r * W + c] = (float) Math.sqrt(dx * dx + dy * dy) / pixelSizeM;
+                float gradient = (float) Math.sqrt(dx * dx + dy * dy);
+                int idx = r * W + c;
+                slope[idx] = gradient / pixelSizeM;
+                northness[idx] = gradient > 1e-5f ? dy / gradient : 0f;
             }
         }
-        return slope;
+        return new TerrainDerivatives(slope, northness);
     }
 }

@@ -49,6 +49,8 @@ public final class ExplorerServer {
 
     private static volatile HttpServer SERVER;
     private static volatile int SERVER_PORT = -1;
+    private static volatile Double EXPLORE_BLOCK_X = null;
+    private static volatile Double EXPLORE_BLOCK_Z = null;
 
     private ExplorerServer() {}
 
@@ -103,6 +105,11 @@ public final class ExplorerServer {
         return SERVER_PORT;
     }
 
+    public static void setExploreOrigin(double blockX, double blockZ) {
+        EXPLORE_BLOCK_X = blockX;
+        EXPLORE_BLOCK_Z = blockZ;
+    }
+
     // =========================================================================
     // Handlers — direct port of server.py routes
     // =========================================================================
@@ -133,7 +140,20 @@ public final class ExplorerServer {
             resp.put("seed", Long.toUnsignedString(LocalTerrainProvider.getSeed()));
             resp.put("channels", Arrays.asList(CHANNEL_NAMES));
             resp.put("native_resolution", NATIVE_RESOLUTION);
-            resp.put("scale", WorldScaleManager.getCurrentScale());
+            int scale = WorldScaleManager.getCurrentScale();
+            resp.put("scale", scale);
+            Double blockX = EXPLORE_BLOCK_X;
+            Double blockZ = EXPLORE_BLOCK_Z;
+            if (blockX != null && blockZ != null) {
+                double nativeI = blockZ / scale;
+                double nativeJ = blockX / scale;
+                resp.put("explore_block_x", blockX);
+                resp.put("explore_block_z", blockZ);
+                resp.put("explore_native_i", nativeI);
+                resp.put("explore_native_j", nativeJ);
+                resp.put("explore_ci", Math.floor(nativeI / 256.0));
+                resp.put("explore_cj", Math.floor(nativeJ / 256.0));
+            }
             sendJson(ex, 200, resp);
         } catch (Exception e) {
             sendError(ex, 500, e.getMessage());
@@ -628,9 +648,6 @@ public final class ExplorerServer {
             case BiomePalette.SMALL_END_ISLANDS: return 0xB8B36B;
             case BiomePalette.END_BARRENS: return 0x9E9A5D;
             case BiomePalette.PALE_GARDEN: return 0xC7C7B0;
-            case BiomePalette.FOREST_SPARSE: return 0x4E8E4E;
-            case BiomePalette.TAIGA_SPARSE: return 0x4D6B61;
-            case BiomePalette.SNOWY_TAIGA_SPARSE: return 0xC8E8E8;
             case BiomePalette.PLAINS:
             default: return 0x8DB360;
         }

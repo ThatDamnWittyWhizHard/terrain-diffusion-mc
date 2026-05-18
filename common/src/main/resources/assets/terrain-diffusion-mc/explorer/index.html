@@ -344,6 +344,36 @@
     display: none;
   }
 
+  .you-marker {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border: 2px solid #ffffff;
+    border-radius: 50%;
+    background: var(--highlight);
+    box-shadow: 0 0 0 2px rgba(0,0,0,0.55), 0 0 10px rgba(249,115,22,0.85);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    display: none;
+    z-index: 5;
+  }
+
+  .you-marker span {
+    position: absolute;
+    left: 12px;
+    top: -7px;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: rgba(10, 12, 22, 0.9);
+    border: 1px solid var(--border);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
   .btn-up    { grid-column: 2; grid-row: 1; }
   .btn-down  { grid-column: 2; grid-row: 3; }
   .btn-left  { grid-column: 1; grid-row: 2; }
@@ -570,6 +600,7 @@
         <div class="map-container" id="coarse-container">
           <img id="coarse-img" class="map-img" alt="coarse map">
           <div class="tile-marker" id="tile-marker"></div>
+            <div class="you-marker" id="you-marker"><span>You are here</span></div>
           <div class="spinner" id="coarse-spinner"></div>
           <div class="map-placeholder" id="coarse-placeholder">Loading…</div>
         </div>
@@ -615,6 +646,7 @@
   const DETAIL_SIZE = 1024;
 
   const BIOME_NAMES = {
+    0: 'the_void',
     1: 'plains',
     2: 'sunflower_plains',
     3: 'snowy_plains',
@@ -641,8 +673,8 @@
     24: 'sparse_jungle',
     25: 'bamboo_jungle',
     26: 'badlands',
-    27: 'wooded_badlands',
-    28: 'eroded_badlands',
+    27: 'eroded_badlands',
+    28: 'wooded_badlands',
     29: 'meadow',
     30: 'cherry_grove',
     31: 'grove',
@@ -650,8 +682,8 @@
     33: 'frozen_peaks',
     34: 'jagged_peaks',
     35: 'stony_peaks',
-    36: 'frozen_river',
-    37: 'river',
+    36: 'river',
+    37: 'frozen_river',
     38: 'beach',
     39: 'snowy_beach',
     40: 'stony_shore',
@@ -665,10 +697,20 @@
     48: 'frozen_ocean',
     49: 'deep_frozen_ocean',
     50: 'mushroom_fields',
-    51: 'pale_garden',
-    108: 'forest_sparse',
-    115: 'taiga_sparse',
-    116: 'snowy_taiga_sparse',
+    51: 'dripstone_caves',
+    52: 'lush_caves',
+    53: 'deep_dark',
+    54: 'nether_wastes',
+    55: 'warped_forest',
+    56: 'crimson_forest',
+    57: 'soul_sand_valley',
+    58: 'basalt_deltas',
+    59: 'the_end',
+    60: 'end_highlands',
+    61: 'end_midlands',
+    62: 'small_end_islands',
+    63: 'end_barrens',
+    64: 'pale_garden',
   };
 
   const CHANNEL_META = [
@@ -695,6 +737,8 @@
     detailPanI: 0,
     detailPanJ: 0,
     detailMode: 'relief',
+    youNativeI: null,
+    youNativeJ: null,
   };
 
   // ── DOM refs ──
@@ -713,6 +757,7 @@
   const coarseInfo      = document.getElementById('coarse-info');
   const coarseZoomLabel = document.getElementById('coarse-zoom-label');
   const tileMarker      = document.getElementById('tile-marker');
+  const youMarker       = document.getElementById('you-marker');
   const detailImg       = document.getElementById('detail-img');
   const detailSpinner   = document.getElementById('detail-spinner');
   const detailPlaceholder = document.getElementById('detail-placeholder');
@@ -822,6 +867,41 @@
     loadCoarse();
   }
 
+  function currentDetailCenterNative() {
+    if (state.detailCI === null) return null;
+    return {
+      i: state.detailCI * 256 + state.detailPanI,
+      j: state.detailCJ * 256 + state.detailPanJ,
+    };
+  }
+
+  function currentDetailTile() {
+    const center = currentDetailCenterNative();
+    if (!center) return null;
+    return {
+      ci: Math.floor(center.i / 256),
+      cj: Math.floor(center.j / 256),
+    };
+  }
+
+  function ensureCoarseContainsDetail() {
+    const tile = currentDetailTile();
+    if (!tile) return false;
+    const { coarseOffsetI: oi, coarseOffsetJ: oj, coarseWindow: w } = state;
+    let nextI = oi;
+    let nextJ = oj;
+    if (tile.ci < oi - w || tile.ci >= oi + w) nextI = tile.ci;
+    if (tile.cj < oj - w || tile.cj >= oj + w) nextJ = tile.cj;
+    if (nextI !== oi || nextJ !== oj) {
+      state.coarseOffsetI = nextI;
+      state.coarseOffsetJ = nextJ;
+      loadCoarse();
+      return true;
+    }
+    updateTileMarker();
+    return false;
+  }
+
   let _lastDetailClick = null;
 
   function showDetailCoords(row, col) {
@@ -908,7 +988,8 @@
     detailSpinner.classList.add('active');
     detailPlaceholder.style.display = 'none';
     detailImg.src = detailUrl();
-    detailInfo.textContent = `ci=${state.detailCI}, cj=${state.detailCJ} | pan=(${state.detailPanI},${state.detailPanJ})`;
+    const tile = currentDetailTile();
+    detailInfo.textContent = `tile ci=${tile.ci}, cj=${tile.cj} | origin ci=${state.detailCI}, cj=${state.detailCJ} | pan=(${state.detailPanI},${state.detailPanJ})`;
   }
 
   async function loadDetailRaw() {
@@ -940,6 +1021,7 @@
     const { coarseOffsetI: oi, coarseOffsetJ: oj, coarseWindow: w } = state;
     coarseInfo.textContent = `ci=[${oi-w}…${oi+w}], cj=[${oj-w}…${oj+w}]`;
     updateTileMarker();
+    updateYouMarker();
     loadCoarseData();
   };
   coarseImg.onerror = () => {
@@ -960,8 +1042,11 @@
 
   // ── Tile marker ──
   function updateTileMarker() {
-    if (state.detailCI === null) { tileMarker.style.display = 'none'; return; }
-    const { detailCI: dci, detailCJ: dcj, coarseOffsetI: oi, coarseOffsetJ: oj, coarseWindow: w } = state;
+    const tile = currentDetailTile();
+    if (!tile) { tileMarker.style.display = 'none'; return; }
+    const { coarseOffsetI: oi, coarseOffsetJ: oj, coarseWindow: w } = state;
+    const dci = tile.ci;
+    const dcj = tile.cj;
     const ci0 = oi - w, ci1 = oi + w, cj0 = oj - w, cj1 = oj + w;
     if (dci < ci0 || dci >= ci1 || dcj < cj0 || dcj >= cj1) { tileMarker.style.display = 'none'; return; }
     const tI = ci1 - ci0, tJ = cj1 - cj0;
@@ -970,6 +1055,18 @@
     tileMarker.style.width  = (1 / tJ * 100) + '%';
     tileMarker.style.height = (1 / tI * 100) + '%';
     tileMarker.style.display = 'block';
+  }
+
+  function updateYouMarker() {
+    if (state.youNativeI === null || state.youNativeJ === null) { youMarker.style.display = 'none'; return; }
+    const { coarseOffsetI: oi, coarseOffsetJ: oj, coarseWindow: w } = state;
+    const ci0 = oi - w, ci1 = oi + w, cj0 = oj - w, cj1 = oj + w;
+    const hereCI = state.youNativeI / 256;
+    const hereCJ = state.youNativeJ / 256;
+    if (hereCI < ci0 || hereCI >= ci1 || hereCJ < cj0 || hereCJ >= cj1) { youMarker.style.display = 'none'; return; }
+    youMarker.style.left = ((hereCJ - cj0) / (cj1 - cj0) * 100) + '%';
+    youMarker.style.top  = ((hereCI - ci0) / (ci1 - ci0) * 100) + '%';
+    youMarker.style.display = 'block';
   }
 
   // ── Tooltip helpers ──
@@ -1153,10 +1250,18 @@
     setCoarseWindow(Math.round(state.coarseWindow * factor));
   }, { passive: false });
 
-  document.getElementById('detail-up').addEventListener('click',    () => { if (state.detailCI !== null) { state.detailPanI -= DETAIL_PAN_STEP; loadDetail(); } });
-  document.getElementById('detail-down').addEventListener('click',  () => { if (state.detailCI !== null) { state.detailPanI += DETAIL_PAN_STEP; loadDetail(); } });
-  document.getElementById('detail-left').addEventListener('click',  () => { if (state.detailCI !== null) { state.detailPanJ -= DETAIL_PAN_STEP; loadDetail(); } });
-  document.getElementById('detail-right').addEventListener('click', () => { if (state.detailCI !== null) { state.detailPanJ += DETAIL_PAN_STEP; loadDetail(); } });
+  function panDetail(deltaI, deltaJ) {
+    if (state.detailCI === null) return;
+    state.detailPanI += deltaI;
+    state.detailPanJ += deltaJ;
+    ensureCoarseContainsDetail();
+    loadDetail();
+  }
+
+  document.getElementById('detail-up').addEventListener('click',    () => panDetail(-DETAIL_PAN_STEP, 0));
+  document.getElementById('detail-down').addEventListener('click',  () => panDetail( DETAIL_PAN_STEP, 0));
+  document.getElementById('detail-left').addEventListener('click',  () => panDetail(0, -DETAIL_PAN_STEP));
+  document.getElementById('detail-right').addEventListener('click', () => panDetail(0,  DETAIL_PAN_STEP));
 
   // ── Init ──
   async function init() {
@@ -1168,12 +1273,25 @@
       state.nativeResolution = data.native_resolution ?? state.nativeResolution;
       // Scale is fixed to the mod's configured value (blocks per native pixel)
       state.coordScale = data.scale || 1;
+      if (Number.isFinite(data.explore_native_i) && Number.isFinite(data.explore_native_j)) {
+        state.youNativeI = data.explore_native_i;
+        state.youNativeJ = data.explore_native_j;
+        const hereCI = Math.floor(state.youNativeI / 256);
+        const hereCJ = Math.floor(state.youNativeJ / 256);
+        state.coarseOffsetI = hereCI;
+        state.coarseOffsetJ = hereCJ;
+        state.detailCI = hereCI;
+        state.detailCJ = hereCJ;
+        state.detailPanI = Math.round(state.youNativeI - hereCI * 256);
+        state.detailPanJ = Math.round(state.youNativeJ - hereCJ * 256);
+      }
       seedDisplay.textContent = data.seed;
       buildChannelButtons(data.channels);
       updateCoordScale();
       updateCoarseZoomLabel();
       statusBar.textContent = `Connected — seed ${data.seed} | scale ${data.scale}×`;
       loadCoarse();
+      if (state.detailCI !== null) loadDetail();
     } catch (e) {
       statusBar.textContent = 'Failed to connect to server';
     }
