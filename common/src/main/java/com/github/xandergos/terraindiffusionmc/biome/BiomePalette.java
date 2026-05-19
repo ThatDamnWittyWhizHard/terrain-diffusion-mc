@@ -90,6 +90,10 @@ public final class BiomePalette {
     public static final short END_BARRENS = 63;
     public static final short PALE_GARDEN = 64;
 
+    // Terrain Diffusion helper biomes.
+    public static final short FOREST_SPARSE = 108;
+    public static final short TAIGA_SPARSE = 115;
+    public static final short SNOWY_TAIGA_SPARSE = 116;
 
     public static final short DEFAULT = PLAINS;
 
@@ -158,7 +162,10 @@ public final class BiomePalette {
             vanilla(END_MIDLANDS, "end_midlands"),
             vanilla(SMALL_END_ISLANDS, "small_end_islands"),
             vanilla(END_BARRENS, "end_barrens"),
-            vanilla(PALE_GARDEN, "pale_garden")
+            vanilla(PALE_GARDEN, "pale_garden"),
+            mod(FOREST_SPARSE, "forest_sparse"),
+            mod(TAIGA_SPARSE, "taiga_sparse"),
+            mod(SNOWY_TAIGA_SPARSE, "snowy_taiga_sparse")
     };
 
     public static Map<Short, Holder<Biome>> buildHolderMap(HolderGetter<Biome> biomeLookup) {
@@ -180,6 +187,9 @@ public final class BiomePalette {
         return entry(id, "minecraft", path);
     }
 
+    private static Entry mod(short id, String path) {
+        return entry(id, "terrain-diffusion-mc", path);
+    }
 
     private static Entry entry(short id, String namespace, String path) {
         return new Entry(id, path, ResourceKey.create(Registries.BIOME, Identifier.fromNamespaceAndPath(namespace, path)));
